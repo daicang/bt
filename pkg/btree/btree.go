@@ -11,15 +11,27 @@ import (
 	"sort"
 )
 
+const (
+	lesser  = -1
+	eq      = 0
+	greater = 1
+)
+
+// BTree is the in-memory indexing structure
 type BTree struct {
 	root   *node
 	degree int
 }
 
-// Item
+// Item holds key/value pair
 type Item struct {
 	key   []byte
 	value []byte
+}
+
+// compare returns -1 when it < other, 0 when equal, 1 when greater
+func (it *Item) compare(other *Item) int {
+	return bytes.Compare(it.key, other.key)
 }
 
 func NewBTree(degree int) *BTree {
@@ -36,8 +48,12 @@ func (b *BTree) Get(it *Item) bool {
 	return b.root.get(it)
 }
 
-func (b *BTree) Set(it *Item) {
-
+func (b *BTree) Set(it *Item) bool {
+	if b.root == nil {
+		return false
+	}
+	b.root.set(it, b.degree)
+	return true
 }
 
 // len(children) == 0 or
@@ -65,25 +81,35 @@ func (n *node) get(it *Item) bool {
 	return n.children[i].get(it)
 }
 
-// set sets key-value in subtree
-func (n *node) set(it *Item, degree int) {
+// set sets key-value in subtree, return old value
+func (n *node) set(it *Item, degree int) (old *Item) {
 	i, found := n.searchIndex(it)
 	if found {
-		// Set found index
+		// Item already in index, rewrite
+		old = n.indexes[i]
 		n.indexes[i] = it
 		return
 	}
-	// Add to index
+	// When item not in index, and is leaf node, add to index
 	if n.isLeaf {
+		old = nil
 		n.insertIndexAt(i, it)
 		return
 	}
-	// Add to child
+	// Find a child to set
 	if n.maybeSplitChild(i, degree) {
-
-	} else {
-
+		switch it.compare(n.indexes[i]) {
+		case lesser:
+		case greater:
+			// Search in the new child
+			i++
+		case eq:
+			old = n.indexes[i]
+			n.indexes[i] = it
+			return
+		}
 	}
+	return n.children[i].set(it, degree)
 }
 
 // maybeSplitChild returns whether i-th child should be splitted,
@@ -101,11 +127,11 @@ func (n *node) maybeSplitChild(i, degree int) bool {
 }
 
 // split Splits node at given index, return element at index and new node
-func (n *node) split(i int) (inode, *node) {
+func (n *node) split(i int) (*Item, *node) {
 	new := NewNode()
-	new.inodes = n.inodes[i+1:]
-	item := n.inodes[i]
-	n.inodes = n.inodes[:i]
+	new.indexes = n.indexes[i+1:]
+	item := n.indexes[i]
+	n.indexes = n.indexes[:i]
 	if !n.isLeaf {
 		new.children = n.children[i+1:]
 		n.children = n.children[:i+1]
@@ -114,43 +140,43 @@ func (n *node) split(i int) (inode, *node) {
 }
 
 func (n *node) insertChildAt(i int, child *node) {
-	n.children = append(n.children, node{})
+	n.children = append(n.children, &node{})
 	copy(n.children[i:], n.children[i+1:])
 	n.children[i] = child
 }
 
-// searchInode returns index, found
+// searchInode returns (firstGreaterEqIndex, found)
 func (n *node) searchIndex(it *Item) (int, bool) {
-	index := n.getFirstNonLessIndex(it)
-	if bytes.Compare(key, n.inodes[index].key) == 0 {
-		return index, true
+	i := n.getFirstNonLessIndex(it)
+	if bytes.Compare(it.key, n.indexes[i].key) == 0 {
+		return i, true
 	}
-	return index, false
+	return i, false
 }
 
 func (n *node) getFirstNonLessIndex(it *Item) int {
-	sort.Search(len(n.indexes), func(i int) bool {
+	return sort.Search(len(n.indexes), func(i int) bool {
 		return bytes.Compare(n.indexes[i].key, it.key) != -1
 	})
 }
 
 // insertInode inserts kv on given node
-func (n *node) insertIndex(it Item) {
-	index := sort.Search(len(n.inodes), func(i int) bool {
-		return bytes.Compare(n.inodes[i].key, item.key) != -1
+func (n *node) insertIndex(it *Item) {
+	index := sort.Search(len(n.indexes), func(i int) bool {
+		return bytes.Compare(n.indexes[i].key, it.key) != -1
 	})
-	n.insertInodeAt(index, item)
+	n.insertIndexAt(index, it)
 }
 
 // insertIndexAt inserts index at given position, pushing subsequent values
 func (n *node) insertIndexAt(i int, it *Item) {
-	n.inodes = append(n.inodes, inode{})
-	copy(n.inodes[i+1:], n.inodes[i:])
-	n.inodes[i] = it
+	n.indexes = append(n.indexes, &Item{})
+	copy(n.indexes[i+1:], n.indexes[i:])
+	n.indexes[i] = it
 }
 
 // removeItemAt removes item at given index
-func (n *node) removeInodeAt(index int) {
-	copy(n.inodes[index:], n.inodes[index+1:])
-	n.inodes = n.inodes[:len(n.inodes)-1]
+func (n *node) removeInodeAt(i int) {
+	copy(n.indexes[i:], n.indexes[i+1:])
+	n.indexes = n.indexes[:len(n.indexes)-1]
 }
