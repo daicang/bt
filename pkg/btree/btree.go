@@ -126,6 +126,7 @@ func (n *node) set(it *Item, degree int) (old *Item) {
 		return
 	}
 	// Find a child to set
+	// FIXME: what if child[i] not exists?
 	if n.maybeSplitChild(i, degree) {
 		switch it.compare(n.indexes[i]) {
 		case lesser:
@@ -177,9 +178,7 @@ func (n *node) insertChildAt(i int, child *node) {
 // searchInode returns (firstGreaterEqIndex, found)
 func (n *node) searchIndex(it *Item) (int, bool) {
 	i := n.getFirstNonLessIndex(it)
-
-	// FIXME: panic!
-	if bytes.Compare(it.key, n.indexes[i].key) == 0 {
+	if i < len(n.indexes) && bytes.Compare(it.key, n.indexes[i].key) == 0 {
 		return i, true
 	}
 	return i, false
