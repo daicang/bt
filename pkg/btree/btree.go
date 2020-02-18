@@ -9,24 +9,58 @@ package btree
 import (
 	"bytes"
 	"sort"
+	"sync"
 )
 
 const (
-	lesser  = -1
-	eq      = 0
-	greater = 1
+	defaultFreeListSize = 32
+	lesser              = -1
+	eq                  = 0
+	greater             = 1
 )
 
 // BTree is the in-memory indexing structure
 type BTree struct {
-	root   *node
-	degree int
+	root     *node
+	degree   int
+	freeList *freeList
 }
 
 // Item holds key/value pair
 type Item struct {
 	key   []byte
 	value []byte
+}
+
+type freeList struct {
+	mu   sync.Mutex
+	list []*node
+}
+
+// len(children) == 0 or
+// len(children) = len(inodes) + 1
+type node struct {
+	isLeaf   bool
+	indexes  []*Item
+	children []*node
+}
+
+func newFreeList(size int) *freeList {
+	l := &freeList{
+		mu:   sync.Mutex{},
+		list: []*node{},
+	}
+	for i := 0; i < size; i++ {
+		l.list = append(l.list, NewNode())
+	}
+	return l
+}
+
+func NewItem(key, value []byte) *Item {
+	return &Item{
+		key:   key,
+		value: value,
+	}
 }
 
 // compare returns -1 when it < other, 0 when equal, 1 when greater
@@ -36,32 +70,27 @@ func (it *Item) compare(other *Item) int {
 
 func NewBTree(degree int) *BTree {
 	return &BTree{
-		root:   nil,
-		degree: degree,
+		root:     NewNode(),
+		degree:   degree,
+		freeList: newFreeList(defaultFreeListSize),
 	}
 }
 
-func (b *BTree) Get(it *Item) bool {
+func (b *BTree) Get(key []byte) []byte {
 	if b.root == nil {
-		return false
+		return nil
 	}
-	return b.root.get(it)
+	it := NewItem(key, nil)
+	b.root.get(it)
+	return it.value
 }
 
-func (b *BTree) Set(it *Item) bool {
+func (b *BTree) Set(key, value []byte) bool {
 	if b.root == nil {
 		return false
 	}
-	b.root.set(it, b.degree)
+	b.root.set(NewItem(key, value), b.degree)
 	return true
-}
-
-// len(children) == 0 or
-// len(children) = len(inodes) + 1
-type node struct {
-	isLeaf   bool
-	indexes  []*Item
-	children []*node
 }
 
 func NewNode() *node {
@@ -148,6 +177,8 @@ func (n *node) insertChildAt(i int, child *node) {
 // searchInode returns (firstGreaterEqIndex, found)
 func (n *node) searchIndex(it *Item) (int, bool) {
 	i := n.getFirstNonLessIndex(it)
+
+	// FIXME: panic!
 	if bytes.Compare(it.key, n.indexes[i].key) == 0 {
 		return i, true
 	}
