@@ -1,8 +1,5 @@
 // Thanks to following projects:
 // btree(https://github.com/google/btree)
-//
-// TODO:
-// - Add free list
 
 package btree
 
@@ -37,10 +34,10 @@ type freeList struct {
 	list []*node
 }
 
-// len(children) == 0 or
-// len(children) = len(inodes) + 1
+// len(children) is 0 or len(inodes) + 1
 type node struct {
 	isLeaf   bool
+	free     *freeList
 	indexes  []*Item
 	children []*node
 }
@@ -48,7 +45,7 @@ type node struct {
 func newFreeList(size int) *freeList {
 	return &freeList{
 		mu: sync.Mutex{},
-		// Set list capability to size, won't change
+		// Size won't change
 		list: make([]*node, size),
 	}
 }
@@ -57,7 +54,7 @@ func (f *freeList) newNode() *node {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(f.list) == 0 {
-		return NewNode()
+		return NewNode(f)
 	}
 	n := f.list[len(f.list)-1]
 	f.list[len(f.list)-1] = nil
@@ -101,16 +98,23 @@ func (b *BTree) Get(key []byte) []byte {
 	return it.value
 }
 
-func (b *BTree) Set(key, value []byte) bool {
+func (b *BTree) Set(key, value []byte) {
+	it := NewItem(key, value)
 	if b.root == nil {
-		return false
+		b.root = b.freeList.newNode()
+		b.root.insertIndexAt(0, it)
+		return
 	}
-	b.root.set(NewItem(key, value), b.degree)
-	return true
+	if len(b.root.indexes) > b.degree {
+
+	}
+	b.root.set(it, b.degree)
 }
 
-func NewNode() *node {
-	return &node{}
+func NewNode(free *freeList) *node {
+	return &node{
+		free: free,
+	}
 }
 
 // get gets the item, return false if not found
@@ -174,7 +178,7 @@ func (n *node) maybeSplitChild(i, degree int) bool {
 
 // split Splits node at given index, return element at index and new node
 func (n *node) split(i int) (*Item, *node) {
-	new := NewNode()
+	new := NewNode(n.free)
 	new.indexes = n.indexes[i+1:]
 	item := n.indexes[i]
 	n.indexes = n.indexes[:i]
