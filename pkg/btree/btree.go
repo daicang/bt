@@ -46,14 +46,31 @@ type node struct {
 }
 
 func newFreeList(size int) *freeList {
-	l := &freeList{
-		mu:   sync.Mutex{},
-		list: []*node{},
+	return &freeList{
+		mu: sync.Mutex{},
+		// Set list capability to size, won't change
+		list: make([]*node, size),
 	}
-	for i := 0; i < size; i++ {
-		l.list = append(l.list, NewNode())
+}
+
+func (f *freeList) newNode() *node {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.list) == 0 {
+		return NewNode()
 	}
-	return l
+	n := f.list[len(f.list)-1]
+	f.list[len(f.list)-1] = nil
+	f.list = f.list[:len(f.list)-1]
+	return n
+}
+
+func (f *freeList) freeNode(n *node) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.list) < cap(f.list) {
+		f.list = append(f.list, n)
+	}
 }
 
 func NewItem(key, value []byte) *Item {
@@ -68,9 +85,8 @@ func (it *Item) compare(other *Item) int {
 	return bytes.Compare(it.key, other.key)
 }
 
-func NewBTree(degree int) *BTree {
+func New(degree int) *BTree {
 	return &BTree{
-		root:     NewNode(),
 		degree:   degree,
 		freeList: newFreeList(defaultFreeListSize),
 	}
