@@ -36,7 +36,6 @@ type freeList struct {
 
 // len(children) is 0 or len(inodes) + 1
 type node struct {
-	isLeaf   bool
 	free     *freeList
 	indexes  []*Item
 	children []*node
@@ -45,8 +44,8 @@ type node struct {
 func newFreeList(size int) *freeList {
 	return &freeList{
 		mu: sync.Mutex{},
-		// Size won't change
-		list: make([]*node, size),
+		// Size won't change. Must set 0 or go would think list already has item
+		list: make([]*node, 0, size),
 	}
 }
 
@@ -54,7 +53,11 @@ func (f *freeList) newNode() *node {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(f.list) == 0 {
-		return NewNode(f)
+		return &node{
+			free:     f,
+			indexes:  []*Item{},
+			children: []*node{},
+		}
 	}
 	n := f.list[len(f.list)-1]
 	f.list[len(f.list)-1] = nil
@@ -106,15 +109,16 @@ func (b *BTree) Set(key, value []byte) {
 		return
 	}
 	if len(b.root.indexes) > b.degree {
-
+		// Split root and place new root
+		i := b.degree / 2
+		r := b.freeList.newNode()
+		it, second := b.root.split(i)
+		r.indexes = append(r.indexes, it)
+		r.children = append(r.children, b.root)
+		r.children = append(r.children, second)
+		b.root = r
 	}
 	b.root.set(it, b.degree)
-}
-
-func NewNode(free *freeList) *node {
-	return &node{
-		free: free,
-	}
 }
 
 // get gets the item, return false if not found
@@ -124,7 +128,7 @@ func (n *node) get(it *Item) bool {
 		it.value = n.indexes[i].value
 		return true
 	}
-	if n.isLeaf {
+	if len(n.children) == 0 {
 		return false
 	}
 	return n.children[i].get(it)
@@ -140,7 +144,7 @@ func (n *node) set(it *Item, degree int) (old *Item) {
 		return
 	}
 	// When item not in index, and is leaf node, add to index
-	if n.isLeaf {
+	if len(n.children) == 0 {
 		old = nil
 		n.insertIndexAt(i, it)
 		return
@@ -178,11 +182,11 @@ func (n *node) maybeSplitChild(i, degree int) bool {
 
 // split Splits node at given index, return element at index and new node
 func (n *node) split(i int) (*Item, *node) {
-	new := NewNode(n.free)
+	new := n.free.newNode()
 	new.indexes = n.indexes[i+1:]
 	item := n.indexes[i]
 	n.indexes = n.indexes[:i]
-	if !n.isLeaf {
+	if len(n.children) > 0 {
 		new.children = n.children[i+1:]
 		n.children = n.children[:i+1]
 	}

@@ -7,7 +7,7 @@ import (
 )
 
 func main() {
-	t := btree.NewBTree(3)
+	t := btree.New(3)
 	t.Set([]byte("hello"), []byte("world"))
 	val := t.Get([]byte("hello"))
 
