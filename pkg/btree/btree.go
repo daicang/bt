@@ -36,6 +36,7 @@ type freeList struct {
 
 // len(children) is 0 or len(inodes) + 1
 type node struct {
+	isLeaf   bool
 	free     *freeList
 	indexes  []*Item
 	children []*node
