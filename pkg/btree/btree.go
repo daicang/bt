@@ -5,6 +5,7 @@ package btree
 
 import (
 	"bytes"
+	"fmt"
 	"sort"
 	"sync"
 )
@@ -16,13 +17,6 @@ const (
 	greater             = 1
 )
 
-// BTree is the in-memory indexing structure
-type BTree struct {
-	root     *node
-	degree   int
-	freeList *freeList
-}
-
 // Item holds key/value pair
 type Item struct {
 	key   []byte
@@ -30,50 +24,49 @@ type Item struct {
 }
 
 type freeList struct {
-	mu   sync.Mutex
+	mu   *sync.Mutex
 	list []*node
-}
-
-// len(children) is 0 or len(inodes) + 1
-type node struct {
-	isLeaf   bool
-	free     *freeList
-	indexes  []*Item
-	children []*node
 }
 
 func newFreeList(size int) *freeList {
 	return &freeList{
-		mu: sync.Mutex{},
+		mu: &sync.Mutex{},
 		// Size won't change. Must set 0 or go would think list already has item
 		list: make([]*node, 0, size),
 	}
 }
 
-func (f *freeList) newNode() *node {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.list) == 0 {
+func (f *freeList) getSize() int {
+	return len(f.list)
+}
+
+func (t *BTree) newNode() *node {
+	t.freeList.mu.Lock()
+	defer t.freeList.mu.Unlock()
+	if len(t.freeList.list) == 0 {
 		return &node{
-			free:     f,
-			indexes:  []*Item{},
-			children: []*node{},
+			tree: t,
 		}
 	}
-	n := f.list[len(f.list)-1]
-	f.list[len(f.list)-1] = nil
-	f.list = f.list[:len(f.list)-1]
+	index := len(t.freeList.list) - 1
+	n := t.freeList.list[index]
+	t.freeList.list[index] = nil
+	t.freeList.list = t.freeList.list[:index]
 	return n
 }
 
-func (f *freeList) freeNode(n *node) {
+func (n *node) free() {
+	f := n.tree.freeList
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(f.list) < cap(f.list) {
+		n.inode = []*Item{}
+		n.children = []*node{}
 		f.list = append(f.list, n)
 	}
 }
 
+// NewItem creates a new item
 func NewItem(key, value []byte) *Item {
 	return &Item{
 		key:   key,
@@ -86,107 +79,183 @@ func (it *Item) compare(other *Item) int {
 	return bytes.Compare(it.key, other.key)
 }
 
+// BTree is the in-memory indexing structure
+type BTree struct {
+	root     *node
+	degree   int
+	length   int
+	freeList *freeList
+}
+
+type inode []*Item
+
+// search returns (found, firstGreaterEqIndex)
+func (in inode) search(it *Item) (bool, int) {
+	i := sort.Search(len(in), func(i int) bool {
+		return bytes.Compare(in[i].key, it.key) != -1
+	})
+	if i < len(in) && bytes.Compare(it.key, in[i].key) == 0 {
+		return true, i
+	}
+	return false, i
+}
+
+// set inserts or replaces item into inode
+func (in *inode) set(it *Item) {
+	found, i := in.search(it)
+	if found {
+		(*in)[i] = it
+	} else {
+		in.insert(i, it)
+	}
+}
+
+// insert inserts it at given position, pushing subsequent values
+func (in *inode) insert(i int, it *Item) {
+	*in = append((*in), &Item{})
+	copy((*in)[i+1:], (*in)[i:])
+	(*in)[i] = it
+}
+
+// remove removes item at given index
+func (in *inode) remove(i int) {
+	copy((*in)[i:], (*in)[i+1:])
+	(*in) = (*in)[:len(*in)-1]
+}
+
+// len(children) is 0 or len(inodes) + 1
+type node struct {
+	tree     *BTree
+	inode    inode
+	children []*node
+}
+
+// New returns a BTree with given degree
 func New(degree int) *BTree {
 	return &BTree{
 		degree:   degree,
+		length:   0,
 		freeList: newFreeList(defaultFreeListSize),
 	}
 }
 
-func (b *BTree) Get(key []byte) []byte {
-	if b.root == nil {
-		return nil
-	}
-	it := NewItem(key, nil)
-	b.root.get(it)
-	return it.value
+// maxItem returns the maxium items in a node
+func (t *BTree) maxItem() int {
+	return t.degree*2 - 1
 }
 
-func (b *BTree) Set(key, value []byte) {
+// minItem returns mininum items in a node, except the root node
+func (t *BTree) minItem() int {
+	return t.degree - 1
+}
+
+// Get returns (found, item) in btree
+func (t *BTree) Get(key []byte) (bool, []byte) {
+	if t.root == nil {
+		return false, nil
+	}
+	it := NewItem(key, nil)
+	found := t.root.get(it)
+	return found, it.value
+}
+
+// Set insert or replace an item in btree
+func (t *BTree) Set(key, value []byte) {
 	it := NewItem(key, value)
-	if b.root == nil {
-		b.root = b.freeList.newNode()
-		b.root.insertIndexAt(0, it)
+	if t.root == nil {
+		t.root = t.newNode()
+		t.root.inode.insert(0, it)
 		return
 	}
-	if len(b.root.indexes) > b.degree {
+	if len(t.root.inode) >= t.maxItem() {
 		// Split root and place new root
-		i := b.degree / 2
-		r := b.freeList.newNode()
-		it, second := b.root.split(i)
-		r.indexes = append(r.indexes, it)
-		r.children = append(r.children, b.root)
-		r.children = append(r.children, second)
-		b.root = r
+		i := t.maxItem() / 2
+		newRoot := t.newNode()
+		t.length += 2
+		it, second := t.root.split(i)
+		newRoot.inode = append(newRoot.inode, it)
+		newRoot.children = append(newRoot.children, t.root)
+		newRoot.children = append(newRoot.children, second)
+		t.root = newRoot
 	}
-	b.root.set(it, b.degree)
+	t.root.set(it, t.maxItem())
+}
+
+// Delete removes an item in btree
+func (t *BTree) Delete(key []byte) bool {
+	return true
 }
 
 // get gets the item, return false if not found
 func (n *node) get(it *Item) bool {
-	i, found := n.searchIndex(it)
+	found, i := n.inode.search(it)
 	if found {
-		it.value = n.indexes[i].value
+		it.value = n.inode[i].value
 		return true
 	}
 	if len(n.children) == 0 {
+		// We have reached leaf
 		return false
 	}
 	return n.children[i].get(it)
 }
 
 // set sets key-value in subtree, return old value
-func (n *node) set(it *Item, degree int) (old *Item) {
-	i, found := n.searchIndex(it)
+func (n *node) set(it *Item, maxItem int) (old *Item) {
+	found, i := n.inode.search(it)
 	if found {
 		// Item already in index, rewrite
-		old = n.indexes[i]
-		n.indexes[i] = it
+		old = n.inode[i]
+		n.inode[i] = it
 		return
 	}
-	// When item not in index, and is leaf node, add to index
+	// Leaf node, add to index
 	if len(n.children) == 0 {
 		old = nil
-		n.insertIndexAt(i, it)
+		n.inode.insert(i, it)
 		return
 	}
-	// Find a child to set
-	// FIXME: what if child[i] not exists?
-	if n.maybeSplitChild(i, degree) {
-		switch it.compare(n.indexes[i]) {
+	fmt.Printf("has %d index, %d children, insert child %d\n", len(n.inode), len(n.children), i)
+	// Check whether child i need split
+	child := n.children[i]
+	if len(child.inode) > maxItem {
+		fmt.Printf("Split child at %d/%d\n", maxItem/2, len(child.inode))
+		newIndex, newChild := child.split(maxItem / 2)
+		n.inode.insert(i, newIndex)
+		n.insertChildAt(i+1, newChild)
+		switch it.compare(newIndex) {
 		case lesser:
+			// Search in i-th child
 		case greater:
-			// Search in the new child
+			// Search in the second child
 			i++
 		case eq:
-			old = n.indexes[i]
-			n.indexes[i] = it
+			// Item is equal to the new index node
+			old = n.inode[i]
+			n.inode[i] = it
 			return
 		}
 	}
-	return n.children[i].set(it, degree)
+	return child.set(it, maxItem)
 }
 
-// maybeSplitChild returns whether i-th child should be splitted,
-// if so, split the child
-func (n *node) maybeSplitChild(i, degree int) bool {
-	child := n.children[i]
-	if len(child.indexes) < degree {
-		return false
-	}
-	it, newChild := child.split(i)
-	// Split i-th child, child-i < inode-i => child-i < new-inode < new-child < inode-i
-	n.insertIndexAt(i, it)
-	n.insertChildAt(i+1, newChild)
-	return true
-}
+// // maybeSplitChild returns whether i-th child should be splitted,
+// // if so, split the child
+// func (n *node) maybeSplitChild(i, maxItem int) bool {
+// 	child := n.children[i]
+// 	it, newChild := child.split(maxItem / 2)
+// 	// Split i-th child, child-i < inode-i => child-i < new-inode < new-child < inode-i
+// 	n.inode.insert(i, it)
+// 	n.insertChildAt(i+1, newChild)
+// 	return true
+// }
 
 // split Splits node at given index, return element at index and new node
 func (n *node) split(i int) (*Item, *node) {
-	new := n.free.newNode()
-	new.indexes = n.indexes[i+1:]
-	item := n.indexes[i]
-	n.indexes = n.indexes[:i]
+	new := n.tree.newNode()
+	new.inode = n.inode[i+1:]
+	item := n.inode[i]
+	n.inode = n.inode[:i]
 	if len(n.children) > 0 {
 		new.children = n.children[i+1:]
 		n.children = n.children[:i+1]
@@ -196,42 +265,6 @@ func (n *node) split(i int) (*Item, *node) {
 
 func (n *node) insertChildAt(i int, child *node) {
 	n.children = append(n.children, &node{})
-	copy(n.children[i:], n.children[i+1:])
+	copy(n.children[i+1:], n.children[i:])
 	n.children[i] = child
-}
-
-// searchInode returns (firstGreaterEqIndex, found)
-func (n *node) searchIndex(it *Item) (int, bool) {
-	i := n.getFirstNonLessIndex(it)
-	if i < len(n.indexes) && bytes.Compare(it.key, n.indexes[i].key) == 0 {
-		return i, true
-	}
-	return i, false
-}
-
-func (n *node) getFirstNonLessIndex(it *Item) int {
-	return sort.Search(len(n.indexes), func(i int) bool {
-		return bytes.Compare(n.indexes[i].key, it.key) != -1
-	})
-}
-
-// insertInode inserts kv on given node
-func (n *node) insertIndex(it *Item) {
-	index := sort.Search(len(n.indexes), func(i int) bool {
-		return bytes.Compare(n.indexes[i].key, it.key) != -1
-	})
-	n.insertIndexAt(index, it)
-}
-
-// insertIndexAt inserts index at given position, pushing subsequent values
-func (n *node) insertIndexAt(i int, it *Item) {
-	n.indexes = append(n.indexes, &Item{})
-	copy(n.indexes[i+1:], n.indexes[i:])
-	n.indexes[i] = it
-}
-
-// removeItemAt removes item at given index
-func (n *node) removeInodeAt(i int) {
-	copy(n.indexes[i:], n.indexes[i+1:])
-	n.indexes = n.indexes[:len(n.indexes)-1]
 }
