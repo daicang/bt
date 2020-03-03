@@ -23,6 +23,14 @@ type Item struct {
 	value []byte
 }
 
+func (it *Item) lessThan(other *Item) bool {
+	return bytes.Compare(it.key, other.key) == -1
+}
+
+func (it *Item) equalTo(other *Item) bool {
+	return bytes.Equal(it.key, other.key)
+}
+
 type freeList struct {
 	mu   *sync.Mutex
 	list []*node
@@ -74,11 +82,6 @@ func NewItem(key, value []byte) *Item {
 	}
 }
 
-// compare returns -1 when it < other, 0 when equal, 1 when greater
-func (it *Item) compare(other *Item) int {
-	return bytes.Compare(it.key, other.key)
-}
-
 // BTree is the in-memory indexing structure
 type BTree struct {
 	root     *node
@@ -89,12 +92,17 @@ type BTree struct {
 
 type inode []*Item
 
+func (in inode) check() {
+
+}
+
 // search returns (found, firstGreaterEqIndex)
 func (in inode) search(it *Item) (bool, int) {
 	i := sort.Search(len(in), func(i int) bool {
-		return bytes.Compare(in[i].key, it.key) != -1
+		// Return index of first not-less-than item
+		return !in[i].lessThan(it)
 	})
-	if i < len(in) && bytes.Compare(it.key, in[i].key) == 0 {
+	if i < len(in) && it.equalTo(in[i]) {
 		return true, i
 	}
 	return false, i
@@ -223,32 +231,17 @@ func (n *node) set(it *Item, maxItem int) (old *Item) {
 		newIndex, newChild := child.split(maxItem / 2)
 		n.inode.insert(i, newIndex)
 		n.insertChildAt(i+1, newChild)
-		switch it.compare(newIndex) {
-		case lesser:
-			// Search in i-th child
-		case greater:
-			// Search in the second child
-			i++
-		case eq:
-			// Item is equal to the new index node
+		if it.equalTo(newIndex) {
 			old = n.inode[i]
 			n.inode[i] = it
 			return
 		}
+		if newIndex.lessThan(it) {
+			i++
+		}
 	}
-	return child.set(it, maxItem)
+	return n.children[i].set(it, maxItem)
 }
-
-// // maybeSplitChild returns whether i-th child should be splitted,
-// // if so, split the child
-// func (n *node) maybeSplitChild(i, maxItem int) bool {
-// 	child := n.children[i]
-// 	it, newChild := child.split(maxItem / 2)
-// 	// Split i-th child, child-i < inode-i => child-i < new-inode < new-child < inode-i
-// 	n.inode.insert(i, it)
-// 	n.insertChildAt(i+1, newChild)
-// 	return true
-// }
 
 // split Splits node at given index, return element at index and new node
 func (n *node) split(i int) (*Item, *node) {
