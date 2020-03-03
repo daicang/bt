@@ -59,17 +59,19 @@ func TestFreeList(t *testing.T) {
 func TestBTree_set(t *testing.T) {
 	tr := New(3)
 	kv := randKV(1000, 20)
+	count := 0
 	for k, v := range kv {
 		key := []byte(k)
 		value := []byte(v)
 		tr.Set(key, value)
 		found, getValue := tr.Get(key)
 		if !found {
-			t.Fatalf("key=%s not found", string(key))
+			t.Fatalf("key=%s not found, count=%d, nodes=%d", string(key), count, tr.length)
 		}
 		if string(getValue) != string(value) {
 			t.Fatalf("key=%s, expected=%s, got=%s", string(key), string(value), string(getValue))
 		}
+		count++
 	}
 	fmt.Println("PASS BTree set")
 }

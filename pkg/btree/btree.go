@@ -43,6 +43,7 @@ func (f *freeList) getSize() int {
 func (t *BTree) newNode() *node {
 	t.freeList.mu.Lock()
 	defer t.freeList.mu.Unlock()
+	t.length++
 	if len(t.freeList.list) == 0 {
 		return &node{
 			tree: t,
@@ -89,12 +90,29 @@ type BTree struct {
 
 type inode []*Item
 
+func (in inode) check() {
+	var last *Item
+	for _, curr := range in {
+		if last != nil {
+			if bytes.Compare(last.key, curr.key) != -1 {
+				for _, p := range in {
+					fmt.Printf(" %s", p.key)
+				}
+				fmt.Printf("\n%s !< %s, %d\n", last.key, curr.key, bytes.Compare(last.key, curr.key))
+				panic("inode order error")
+			}
+		}
+		last = curr
+	}
+}
+
 // search returns (found, firstGreaterEqIndex)
 func (in inode) search(it *Item) (bool, int) {
+	in.check()
 	i := sort.Search(len(in), func(i int) bool {
 		return bytes.Compare(in[i].key, it.key) != -1
 	})
-	if i < len(in) && bytes.Compare(it.key, in[i].key) == 0 {
+	if i < len(in) && bytes.Equal(it.key, in[i].key) {
 		return true, i
 	}
 	return false, i
@@ -108,13 +126,24 @@ func (in *inode) set(it *Item) {
 	} else {
 		in.insert(i, it)
 	}
+	in.check()
 }
 
 // insert inserts it at given position, pushing subsequent values
 func (in *inode) insert(i int, it *Item) {
+	if i > 0 && bytes.Compare(it.key, (*in)[i-1].key) < 0 {
+		fmt.Printf("1: %d %s %s\n", i, (*in)[i-1].key, it.key)
+		panic("insert: left inconsistent")
+	}
+	if i < len(*in) && bytes.Compare(it.key, (*in)[i].key) > 0 {
+		fmt.Printf("2: %d %s %s\n", i, it.key, (*in)[i].key)
+		panic("insert: right inconsistent")
+	}
+	in.check()
 	*in = append((*in), &Item{})
 	copy((*in)[i+1:], (*in)[i:])
 	(*in)[i] = it
+	in.check()
 }
 
 // remove removes item at given index
@@ -151,6 +180,7 @@ func (t *BTree) minItem() int {
 
 // Get returns (found, item) in btree
 func (t *BTree) Get(key []byte) (bool, []byte) {
+	fmt.Printf("Get ")
 	if t.root == nil {
 		return false, nil
 	}
@@ -161,6 +191,7 @@ func (t *BTree) Get(key []byte) (bool, []byte) {
 
 // Set insert or replace an item in btree
 func (t *BTree) Set(key, value []byte) {
+	fmt.Printf("Set ")
 	it := NewItem(key, value)
 	if t.root == nil {
 		t.root = t.newNode()
@@ -171,7 +202,6 @@ func (t *BTree) Set(key, value []byte) {
 		// Split root and place new root
 		i := t.maxItem() / 2
 		newRoot := t.newNode()
-		t.length += 2
 		it, second := t.root.split(i)
 		newRoot.inode = append(newRoot.inode, it)
 		newRoot.children = append(newRoot.children, t.root)
@@ -191,12 +221,15 @@ func (n *node) get(it *Item) bool {
 	found, i := n.inode.search(it)
 	if found {
 		it.value = n.inode[i].value
+		fmt.Printf("\n")
 		return true
 	}
 	if len(n.children) == 0 {
 		// We have reached leaf
+		fmt.Printf("\n")
 		return false
 	}
+	fmt.Printf("%d", i)
 	return n.children[i].get(it)
 }
 
@@ -205,6 +238,7 @@ func (n *node) set(it *Item, maxItem int) (old *Item) {
 	found, i := n.inode.search(it)
 	if found {
 		// Item already in index, rewrite
+		fmt.Println("rewrite index")
 		old = n.inode[i]
 		n.inode[i] = it
 		return
@@ -212,15 +246,27 @@ func (n *node) set(it *Item, maxItem int) (old *Item) {
 	// Leaf node, add to index
 	if len(n.children) == 0 {
 		old = nil
+		fmt.Printf(" insert leaf at %d\n", i)
 		n.inode.insert(i, it)
+		n.inode.check()
 		return
 	}
-	fmt.Printf("has %d index, %d children, insert child %d\n", len(n.inode), len(n.children), i)
 	// Check whether child i need split
 	child := n.children[i]
 	if len(child.inode) > maxItem {
-		fmt.Printf("Split child at %d/%d\n", maxItem/2, len(child.inode))
+		// fmt.Printf("Split child %d at %d/%d\n", i, maxItem/2, len(child.inode))
+		for _, ii := range child.inode {
+			if i > 0 && i < len(n.inode) && bytes.Compare(ii.key, n.inode[i].key) <= 0 {
+				fmt.Printf("\n%d %s %s\n", i, n.inode[i].key, ii.key)
+				panic("left inconsistent")
+			}
+			if i < len(n.inode)-1 && bytes.Compare(ii.key, n.inode[i+1].key) > 0 {
+				panic("right inconsistent")
+			}
+		}
+
 		newIndex, newChild := child.split(maxItem / 2)
+		// FIXME: WRONG index!!!!
 		n.inode.insert(i, newIndex)
 		n.insertChildAt(i+1, newChild)
 		switch it.compare(newIndex) {
@@ -231,24 +277,15 @@ func (n *node) set(it *Item, maxItem int) (old *Item) {
 			i++
 		case eq:
 			// Item is equal to the new index node
+			fmt.Printf("Rewrite new index\n")
 			old = n.inode[i]
 			n.inode[i] = it
 			return
 		}
 	}
-	return child.set(it, maxItem)
+	fmt.Printf("%d", i)
+	return n.children[i].set(it, maxItem)
 }
-
-// // maybeSplitChild returns whether i-th child should be splitted,
-// // if so, split the child
-// func (n *node) maybeSplitChild(i, maxItem int) bool {
-// 	child := n.children[i]
-// 	it, newChild := child.split(maxItem / 2)
-// 	// Split i-th child, child-i < inode-i => child-i < new-inode < new-child < inode-i
-// 	n.inode.insert(i, it)
-// 	n.insertChildAt(i+1, newChild)
-// 	return true
-// }
 
 // split Splits node at given index, return element at index and new node
 func (n *node) split(i int) (*Item, *node) {
