@@ -23,6 +23,14 @@ type Item struct {
 	value []byte
 }
 
+func (it *Item) lessThan(other *Item) bool {
+	return bytes.Compare(it.key, other.key) == -1
+}
+
+func (it *Item) equalTo(other *Item) bool {
+	return bytes.Equal(it.key, other.key)
+}
+
 type freeList struct {
 	mu   *sync.Mutex
 	list []*node
@@ -75,11 +83,6 @@ func NewItem(key, value []byte) *Item {
 	}
 }
 
-// compare returns -1 when it < other, 0 when equal, 1 when greater
-func (it *Item) compare(other *Item) int {
-	return bytes.Compare(it.key, other.key)
-}
-
 // BTree is the in-memory indexing structure
 type BTree struct {
 	root     *node
@@ -110,9 +113,10 @@ func (in inode) check() {
 func (in inode) search(it *Item) (bool, int) {
 	in.check()
 	i := sort.Search(len(in), func(i int) bool {
-		return bytes.Compare(in[i].key, it.key) != -1
+		// Return index of first not-less-than item
+		return !in[i].lessThan(it)
 	})
-	if i < len(in) && bytes.Equal(it.key, in[i].key) {
+	if i < len(in) && it.equalTo(in[i]) {
 		return true, i
 	}
 	return false, i
@@ -269,18 +273,13 @@ func (n *node) set(it *Item, maxItem int) (old *Item) {
 		// FIXME: WRONG index!!!!
 		n.inode.insert(i, newIndex)
 		n.insertChildAt(i+1, newChild)
-		switch it.compare(newIndex) {
-		case lesser:
-			// Search in i-th child
-		case greater:
-			// Search in the second child
-			i++
-		case eq:
-			// Item is equal to the new index node
-			fmt.Printf("Rewrite new index\n")
+		if it.equalTo(newIndex) {
 			old = n.inode[i]
 			n.inode[i] = it
 			return
+		}
+		if newIndex.lessThan(it) {
+			i++
 		}
 	}
 	fmt.Printf("%d", i)
