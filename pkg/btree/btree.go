@@ -135,6 +135,8 @@ func (in *inode) set(it *Item) {
 
 // insert inserts it at given position, pushing subsequent values
 func (in *inode) insert(i int, it *Item) {
+	in.check()
+
 	if i > 0 && bytes.Compare(it.key, (*in)[i-1].key) < 0 {
 		fmt.Printf("1: %d %s %s\n", i, (*in)[i-1].key, it.key)
 		panic("insert: left inconsistent")
@@ -143,7 +145,6 @@ func (in *inode) insert(i int, it *Item) {
 		fmt.Printf("2: %d %s %s\n", i, it.key, (*in)[i].key)
 		panic("insert: right inconsistent")
 	}
-	in.check()
 	*in = append((*in), &Item{})
 	copy((*in)[i+1:], (*in)[i:])
 	(*in)[i] = it
@@ -239,6 +240,7 @@ func (n *node) get(it *Item) bool {
 
 // set sets key-value in subtree, return old value
 func (n *node) set(it *Item, maxItem int) (old *Item) {
+	n.inode.check()
 	found, i := n.inode.search(it)
 	if found {
 		// Item already in index, rewrite
@@ -255,22 +257,28 @@ func (n *node) set(it *Item, maxItem int) (old *Item) {
 		n.inode.check()
 		return
 	}
+	n.inode.check()
 	// Check whether child i need split
 	child := n.children[i]
 	if len(child.inode) > maxItem {
 		// fmt.Printf("Split child %d at %d/%d\n", i, maxItem/2, len(child.inode))
-		for _, ii := range child.inode {
-			if i > 0 && i < len(n.inode) && bytes.Compare(ii.key, n.inode[i].key) <= 0 {
-				fmt.Printf("\n%d %s %s\n", i, n.inode[i].key, ii.key)
-				panic("left inconsistent")
-			}
-			if i < len(n.inode)-1 && bytes.Compare(ii.key, n.inode[i+1].key) > 0 {
-				panic("right inconsistent")
-			}
-		}
 
+		// for _, ii := range child.inode {
+		// 	if i > 0 && i < len(n.inode) && bytes.Compare(ii.key, n.inode[i].key) <= 0 {
+		// 		fmt.Printf("\n%d %s %s\n", i, n.inode[i].key, ii.key)
+		// 		panic("left inconsistent")
+		// 	}
+		// 	if i < len(n.inode)-1 && bytes.Compare(ii.key, n.inode[i+1].key) > 0 {
+		// 		panic("right inconsistent")
+		// 	}
+		// }
+
+		child.inode.check()
 		newIndex, newChild := child.split(maxItem / 2)
+		child.inode.check()
+		newChild.inode.check()
 		// FIXME: WRONG index!!!!
+		n.inode.check()
 		n.inode.insert(i, newIndex)
 		n.insertChildAt(i+1, newChild)
 		if it.equalTo(newIndex) {
@@ -288,6 +296,7 @@ func (n *node) set(it *Item, maxItem int) (old *Item) {
 
 // split Splits node at given index, return element at index and new node
 func (n *node) split(i int) (*Item, *node) {
+	n.inode.check()
 	new := n.tree.newNode()
 	new.inode = n.inode[i+1:]
 	item := n.inode[i]
