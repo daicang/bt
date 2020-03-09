@@ -8,6 +8,7 @@ import (
 )
 
 var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+var numberRunes = []rune("0123456789")
 
 func init() {
 	seed := time.Now().Unix()
@@ -58,9 +59,12 @@ func TestFreeList(t *testing.T) {
 
 func TestBTree_set(t *testing.T) {
 	tr := New(3)
-	kv := randKV(1000, 20)
+	kv := randKV(1000, 10)
 	count := 0
+	inOrder := true
 	for k, v := range kv {
+		fmt.Printf("\nSet/Get test %d, key=%s\n", count, k)
+		var lastIt Item
 		key := []byte(k)
 		value := []byte(v)
 		tr.Set(key, value)
@@ -72,6 +76,17 @@ func TestBTree_set(t *testing.T) {
 			t.Fatalf("key=%s, expected=%s, got=%s", string(key), string(value), string(getValue))
 		}
 		count++
+		tr.Iterate(func(it Item, id int) {
+			// fmt.Printf("%s(%d)\n", it, id)
+			if lastIt != nil && it.lessThan(lastIt) {
+				// fmt.Printf("%s %s\n", it, lastIt)
+				inOrder = false
+			}
+			lastIt = it
+		})
+		if !inOrder {
+			t.Fatalf("Tree lose order")
+		}
 	}
 	fmt.Println("PASS BTree set")
 }

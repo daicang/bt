@@ -5,5 +5,6 @@ Bugs:
 
 TODO:
 
-- [] Finish btree indexing
+- [x] Finish btree indexing
+- [] Finish btree deleting logic
 - [] Implement b+tree indexing
