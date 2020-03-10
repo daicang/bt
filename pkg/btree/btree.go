@@ -186,6 +186,12 @@ func (in *inode) removeAt(i int) Item {
 	return it
 }
 
+func (in *inode) pop() Item {
+	it := (*in)[len(*in)-1]
+	(*in) = (*in)[:len(*in)-1]
+	return it
+}
+
 func (c *children) insertAt(i int, child *node) {
 	*c = append(*c, nil)
 	copy((*c)[i+1:], (*c)[i:])
@@ -259,14 +265,15 @@ func (t *BTree) Set(key, value []byte) {
 	t.root.set(it, t.maxItem())
 }
 
-// Delete removes an item, return true if exist
-// func (t *BTree) Delete(key []byte) bool {
-// 	if t.root == nil {
-// 		return false
-// 	}
-// 	it := newKV(key, nil)
-// 	return t.root.remove(it)
-// }
+// Delete removes an item, return value if exist
+func (t *BTree) Delete(key []byte) []byte {
+	if t.root == nil {
+		return nil
+	}
+	it := t.root.remove(newKV(key, nil), t.minItem(), removeItem)
+	kv, ok := it.(KV)
+	return kv.value
+}
 
 // get returns (found, Item)
 func (n *node) get(it Item) (bool, Item) {
@@ -376,16 +383,40 @@ const (
 	removeMax
 )
 
-// func (n *node) remove(it Item, minItem int, typ toRemove) Item {
-// 	found, i := n.inode.search(it)
-// 	if len(n.children) == 0 {
-// 		if found {
-// 			return n.inode.removeAt(i)
-// 		}
-// 		return nil
-// 	}
-
-// }
+func (n *node) remove(it Item, minItem int, typ toRemove) Item {
+	if len(n.children) == 0 {
+		switch typ {
+		case removeItem:
+			found, i := n.inode.search(it)
+			if found {
+				return n.inode.removeAt(i)
+			}
+			return nil
+		case removeMin:
+			return n.inode.removeAt(0)
+		case removeMax:
+			return n.inode.pop()
+		default:
+			panic("Invalid remove type")
+		}
+	}
+	switch typ {
+	case removeItem:
+		found, i := n.inode.search(it)
+		if found {
+			removed := n.inode[i]
+			n.inode[i] = n.children[i].remove(it, minItem, removeMax)
+			return removed
+		}
+		return n.children[i].remove(it, minItem, removeItem)
+	case removeMin:
+		return n.children[0].remove(it, minItem, removeMin)
+	case removeMax:
+		return n.children[len(n.children)-1].remove(it, minItem, removeMax)
+	default:
+		panic("Invalid remove type")
+	}
+}
 
 // split Splits node at given index, return element at index and new node
 func (n *node) split(i int) (Item, *node) {

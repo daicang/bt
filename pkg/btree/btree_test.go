@@ -79,7 +79,6 @@ func TestBTree_set(t *testing.T) {
 		tr.Iterate(func(it Item, id int) {
 			// fmt.Printf("%s(%d)\n", it, id)
 			if lastIt != nil && it.lessThan(lastIt) {
-				// fmt.Printf("%s %s\n", it, lastIt)
 				inOrder = false
 			}
 			lastIt = it
@@ -88,5 +87,31 @@ func TestBTree_set(t *testing.T) {
 			t.Fatalf("Tree lose order")
 		}
 	}
-	fmt.Println("PASS BTree set")
+	fmt.Println("PASS BTree Set/Get")
+}
+
+func TestBTree_delete(t *testing.T) {
+	tr := New(3)
+	kv := randKV(1000, 10)
+	// count := 0
+	keys := [][]byte{}
+	for k, v := range kv {
+		key := []byte(k)
+		value := []byte(v)
+		tr.Set(key, value)
+		keys = append(keys, key)
+	}
+	perm := rand.Perm(len(keys))
+	for _, p := range perm {
+		key := keys[p]
+		value := tr.Delete(key)
+		if string(value) != string(kv[string(key)]) {
+			t.Fatalf("Delete error")
+		}
+		found, _ := tr.Get(key)
+		if found {
+			t.Fatalf("Item %s not deleted", key)
+		}
+	}
+	fmt.Printf("PASS BTree Delete")
 }
