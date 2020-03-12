@@ -106,7 +106,7 @@ func TestBTree_delete(t *testing.T) {
 		key := keys[p]
 		value := tr.Delete(key)
 		if string(value) != string(kv[string(key)]) {
-			t.Fatalf("Delete error")
+			t.Fatalf("Delete error: expected %s, get %s", kv[string(key)], value)
 		}
 		found, _ := tr.Get(key)
 		if found {

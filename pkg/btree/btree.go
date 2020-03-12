@@ -253,7 +253,7 @@ func (t *BTree) Get(key []byte) (bool, []byte) {
 
 // Set insert or replace an item in btree
 func (t *BTree) Set(key, value []byte) {
-	fmt.Printf("Set %s\n", key)
+	fmt.Printf("Set %s=%s\n", key, value)
 	it := newKV(key, value)
 	if t.root == nil {
 		t.root = t.newNode()
@@ -414,16 +414,10 @@ func (n *node) remove(it Item, minItem int, typ toRemove) Item {
 	}
 	// Now node must have child. All 3 types would invoke remove on child
 	var i int
+	var found bool
 	switch typ {
 	case removeItem:
-		found, i := n.inode.search(it)
-		if found {
-			removed := n.inode[i]
-			// TODO: growChildAndRemove
-			n.inode[i] = n.children[i].remove(it, minItem, removeMax)
-			return removed
-		}
-		return n.children[i].remove(it, minItem, removeItem)
+		found, i = n.inode.search(it)
 	case removeMin:
 		i = 0
 	case removeMax:
@@ -433,6 +427,11 @@ func (n *node) remove(it Item, minItem int, typ toRemove) Item {
 	}
 	if len(n.children[i].inode) <= minItem {
 		return n.growChildAndRemove(it, i, minItem, typ)
+	}
+	if found {
+		removed := n.inode[i]
+		n.inode[i] = n.children[i].remove(it, minItem, removeMax)
+		return removed
 	}
 	return n.children[i].remove(it, minItem, typ)
 }
@@ -465,6 +464,7 @@ func (n *node) growChildAndRemove(it Item, i, minItem int, typ toRemove) Item {
 		left.children = append(left.children, right.children...)
 		right.free()
 	}
+	// FIXME: endless loop here!
 	return n.remove(it, minItem, typ)
 }
 
