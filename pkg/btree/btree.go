@@ -154,13 +154,13 @@ func (in *inode) set(it Item) {
 	if found {
 		(*in)[i] = it
 	} else {
-		in.insert(i, it)
+		in.insertAt(i, it)
 	}
 	in.check()
 }
 
 // insert inserts it at given position, pushing subsequent values
-func (in *inode) insert(i int, it Item) {
+func (in *inode) insertAt(i int, it Item) {
 	in.check()
 
 	if i > 0 && it.lessThan((*in)[i-1]) {
@@ -202,6 +202,12 @@ func (c *children) removeAt(i int) {
 	copy((*c)[i:], (*c)[i+1:])
 	(*c)[len(*c)-1] = nil
 	*c = (*c)[:len(*c)-1]
+}
+
+func (c *children) pop() *node {
+	n := (*c)[len(*c)-1]
+	(*c) = (*c)[:len(*c)-1]
+	return n
 }
 
 // New returns a BTree with given degree
@@ -249,7 +255,7 @@ func (t *BTree) Set(key, value []byte) {
 	it := newKV(key, value)
 	if t.root == nil {
 		t.root = t.newNode()
-		t.root.inode.insert(0, it)
+		t.root.inode.insertAt(0, it)
 		return
 	}
 	if len(t.root.inode) >= t.maxItem() {
@@ -321,7 +327,7 @@ func (n *node) set(it Item, maxItem int) Item {
 	// Leaf node, add to index
 	if len(n.children) == 0 {
 		// fmt.Printf(" insert leaf at node=%d index=%d\n", n.id, i)
-		n.inode.insert(i, it)
+		n.inode.insertAt(i, it)
 		return nil
 	}
 	n.inode.check()
@@ -333,12 +339,11 @@ func (n *node) set(it Item, maxItem int) Item {
 
 		newIndex, newChild := child.split(maxItem / 2)
 
-		child.inode.check()
-		newChild.inode.check()
-		n.inode.check()
+		// child.inode.check()
+		// newChild.inode.check()
+		// n.inode.check()
 
-		// FIXME: WRONG index!!!!
-		n.inode.insert(i, newIndex)
+		n.inode.insertAt(i, newIndex)
 
 		n.children.insertAt(i+1, newChild)
 		if it.equalTo(newIndex) {
@@ -383,6 +388,8 @@ const (
 	removeMax
 )
 
+// remove removes specified or minium/maxium item from current node,
+// returns the removed item.
 func (n *node) remove(it Item, minItem int, typ toRemove) Item {
 	if len(n.children) == 0 {
 		switch typ {
@@ -400,6 +407,8 @@ func (n *node) remove(it Item, minItem int, typ toRemove) Item {
 			panic("Invalid remove type")
 		}
 	}
+	// Now node must have child. All 3 types would remove
+	var i int
 	switch typ {
 	case removeItem:
 		found, i := n.inode.search(it)
@@ -410,12 +419,32 @@ func (n *node) remove(it Item, minItem int, typ toRemove) Item {
 		}
 		return n.children[i].remove(it, minItem, removeItem)
 	case removeMin:
-		return n.children[0].remove(it, minItem, removeMin)
+		i = 0
+		// return n.children[0].remove(it, minItem, removeMin)
 	case removeMax:
-		return n.children[len(n.children)-1].remove(it, minItem, removeMax)
+		i = len(n.children) - 1
+		// return n.children[len(n.children)-1].remove(it, minItem, removeMax)
 	default:
 		panic("Invalid remove type")
 	}
+	//
+	if len(n.children[i].inode) <= minItem {
+		return growChildAndRemove(it, i, minItem, typ)
+	}
+	return n.children[i].remove(it, minItem, typ)
+}
+
+func (n *node) growChildAndRemove(it Item, i, minItem int, typ toRemove) Item {
+	if i > 0 && len(n.children[i-1].inode) > minItem {
+		n.children[i].inode.insertAt(0, n.inode[i])
+		n.inode[i] = n.children[i-1].inode.pop()
+		n.children[i].children.insertAt(0, n.children[i-1].children.pop())
+	} else if i < len(n.children)-1 && len(n.children[i+1].inode) > minItem {
+		n
+	} else {
+
+	}
+	return n.remove(it, minItem, typ)
 }
 
 // split Splits node at given index, return element at index and new node
