@@ -198,10 +198,12 @@ func (c *children) insertAt(i int, child *node) {
 	(*c)[i] = child
 }
 
-func (c *children) removeAt(i int) {
+func (c *children) removeAt(i int) *node {
+	n := (*c)[i]
 	copy((*c)[i:], (*c)[i+1:])
 	(*c)[len(*c)-1] = nil
 	*c = (*c)[:len(*c)-1]
+	return n
 }
 
 func (c *children) pop() *node {
@@ -278,6 +280,9 @@ func (t *BTree) Delete(key []byte) []byte {
 	}
 	it := t.root.remove(newKV(key, nil), t.minItem(), removeItem)
 	kv, ok := it.(KV)
+	if !ok {
+		panic("Invalid type")
+	}
 	return kv.value
 }
 
@@ -355,7 +360,7 @@ func (n *node) set(it Item, maxItem int) Item {
 			i++
 		}
 	}
-	n.checkChildInodes(i)
+	// n.checkChildInodes(i)
 	// fmt.Printf("(%d) Insert into child node %d\n", n.id, n.children[i].id)
 	ret := n.children[i].set(it, maxItem)
 	n.checkChildInodes(i)
@@ -407,42 +412,58 @@ func (n *node) remove(it Item, minItem int, typ toRemove) Item {
 			panic("Invalid remove type")
 		}
 	}
-	// Now node must have child. All 3 types would remove
+	// Now node must have child. All 3 types would invoke remove on child
 	var i int
 	switch typ {
 	case removeItem:
 		found, i := n.inode.search(it)
 		if found {
 			removed := n.inode[i]
+			// TODO: growChildAndRemove
 			n.inode[i] = n.children[i].remove(it, minItem, removeMax)
 			return removed
 		}
 		return n.children[i].remove(it, minItem, removeItem)
 	case removeMin:
 		i = 0
-		// return n.children[0].remove(it, minItem, removeMin)
 	case removeMax:
 		i = len(n.children) - 1
-		// return n.children[len(n.children)-1].remove(it, minItem, removeMax)
 	default:
 		panic("Invalid remove type")
 	}
-	//
 	if len(n.children[i].inode) <= minItem {
-		return growChildAndRemove(it, i, minItem, typ)
+		return n.growChildAndRemove(it, i, minItem, typ)
 	}
 	return n.children[i].remove(it, minItem, typ)
 }
 
 func (n *node) growChildAndRemove(it Item, i, minItem int, typ toRemove) Item {
 	if i > 0 && len(n.children[i-1].inode) > minItem {
-		n.children[i].inode.insertAt(0, n.inode[i])
-		n.inode[i] = n.children[i-1].inode.pop()
-		n.children[i].children.insertAt(0, n.children[i-1].children.pop())
+		// Borrow from left sibling
+		n.children[i].inode.insertAt(0, n.inode[i-1])
+		n.inode[i-1] = n.children[i-1].inode.pop()
+		if len(n.children[i-1].children) > 0 {
+			n.children[i].children.insertAt(0, n.children[i-1].children.pop())
+		}
 	} else if i < len(n.children)-1 && len(n.children[i+1].inode) > minItem {
-		n
+		// Borrow from right sibling
+		n.children[i].inode = append(n.children[i].inode, n.inode[i])
+		n.inode[i] = n.children[i+1].inode.removeAt(0)
+		if len(n.children[i+1].children) > 0 {
+			n.children[i].children = append(n.children[i].children, n.children[i+1].children.removeAt(0))
+		}
 	} else {
-
+		if i >= len(n.children)-1 {
+			// i is the rightmost child
+			i--
+		}
+		// Merge with right child
+		left := n.children[i]
+		right := n.children[i+1]
+		left.inode = append(left.inode, n.inode.removeAt(i))
+		left.inode = append(left.inode, right.inode...)
+		left.children = append(left.children, right.children...)
+		right.free()
 	}
 	return n.remove(it, minItem, typ)
 }
