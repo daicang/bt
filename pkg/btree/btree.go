@@ -281,7 +281,7 @@ func (t *BTree) Delete(key []byte) []byte {
 	it := t.root.remove(newKV(key, nil), t.minItem(), removeItem)
 	kv, ok := it.(KV)
 	if !ok {
-		panic("Invalid type")
+		panic(fmt.Sprintf("DeleteKey returns invalid item: %v", it))
 	}
 	return kv.value
 }
@@ -298,6 +298,16 @@ func (n *node) get(it Item) (bool, Item) {
 	}
 	n.checkChildInodes(i)
 	return n.children[i].get(it)
+}
+
+// check checks 1. inode is sorted 2. for internal nodes, len(inode) = len(children) - 1
+func (n *node) check() {
+	n.inode.check()
+	if len(n.children) > 0 {
+		if len(n.inode) != len(n.children)-1 {
+			panic(fmt.Sprintf("node %d has %d inode, %d children\n", n.id, len(n.inode), len(n.children)))
+		}
+	}
 }
 
 func (n *node) checkChildInodes(i int) {
@@ -421,11 +431,12 @@ func (n *node) remove(it Item, minItem int, typ toRemove) Item {
 	case removeMin:
 		i = 0
 	case removeMax:
-		i = len(n.children) - 1
+		i = len(n.inode)
 	default:
 		panic("Invalid remove type")
 	}
 	if len(n.children[i].inode) <= minItem {
+		fmt.Printf("node %d has %d inode <= %d, grow\n", n.children[i].id, len(n.children[i].inode), minItem)
 		return n.growChildAndRemove(it, i, minItem, typ)
 	}
 	if found {
@@ -437,7 +448,10 @@ func (n *node) remove(it Item, minItem int, typ toRemove) Item {
 }
 
 func (n *node) growChildAndRemove(it Item, i, minItem int, typ toRemove) Item {
+	// FIXME: panic happens
+	n.children[i].check()
 	if i > 0 && len(n.children[i-1].inode) > minItem {
+		fmt.Println("Borrow from left sibling")
 		// Borrow from left sibling
 		n.children[i].inode.insertAt(0, n.inode[i-1])
 		n.inode[i-1] = n.children[i-1].inode.pop()
@@ -445,6 +459,7 @@ func (n *node) growChildAndRemove(it Item, i, minItem int, typ toRemove) Item {
 			n.children[i].children.insertAt(0, n.children[i-1].children.pop())
 		}
 	} else if i < len(n.children)-1 && len(n.children[i+1].inode) > minItem {
+		fmt.Println("Borrow from right sibling")
 		// Borrow from right sibling
 		n.children[i].inode = append(n.children[i].inode, n.inode[i])
 		n.inode[i] = n.children[i+1].inode.removeAt(0)
@@ -456,6 +471,7 @@ func (n *node) growChildAndRemove(it Item, i, minItem int, typ toRemove) Item {
 			// i is the rightmost child
 			i--
 		}
+		fmt.Println("Merging")
 		// Merge with right child
 		left := n.children[i]
 		right := n.children[i+1]
@@ -464,6 +480,7 @@ func (n *node) growChildAndRemove(it Item, i, minItem int, typ toRemove) Item {
 		left.children = append(left.children, right.children...)
 		right.free()
 	}
+	n.children[i].check()
 	// FIXME: endless loop here!
 	return n.remove(it, minItem, typ)
 }
