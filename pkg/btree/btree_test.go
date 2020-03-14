@@ -59,23 +59,24 @@ func TestFreeList(t *testing.T) {
 
 func TestBTree_set(t *testing.T) {
 	tr := New(3)
-	kv := randKV(1000, 10)
-	count := 0
+	totalCase := 1000
+	kv := randKV(totalCase, 10)
+	caseID := 0
 	inOrder := true
 	for k, v := range kv {
-		fmt.Printf("\nSet/Get test %d, key=%s\n", count, k)
+		fmt.Printf("\nSet/Get test (%d/%d), key=%s\n", caseID, totalCase, k)
+		caseID++
 		var lastIt Item
 		key := []byte(k)
 		value := []byte(v)
 		tr.Set(key, value)
 		found, getValue := tr.Get(key)
 		if !found {
-			t.Fatalf("key=%s not found, count=%d, nodes=%d", string(key), count, tr.length)
+			t.Fatalf("key=%s not found, nodes=%d", string(key), tr.length)
 		}
 		if string(getValue) != string(value) {
 			t.Fatalf("key=%s, expected=%s, got=%s", string(key), string(value), string(getValue))
 		}
-		count++
 		tr.Iterate(func(it Item, id int) {
 			// fmt.Printf("%s(%d)\n", it, id)
 			if lastIt != nil && it.lessThan(lastIt) {
@@ -91,9 +92,9 @@ func TestBTree_set(t *testing.T) {
 }
 
 func TestBTree_delete(t *testing.T) {
+	totalCase := 1000
 	tr := New(3)
-	kv := randKV(1000, 10)
-	// count := 0
+	kv := randKV(totalCase, 10)
 	keys := [][]byte{}
 	for k, v := range kv {
 		key := []byte(k)
@@ -102,7 +103,8 @@ func TestBTree_delete(t *testing.T) {
 		keys = append(keys, key)
 	}
 	perm := rand.Perm(len(keys))
-	for _, p := range perm {
+	for caseID, p := range perm {
+		fmt.Printf("Delete test (%d/%d)\n", caseID, totalCase)
 		key := keys[p]
 		value := tr.Delete(key)
 		if string(value) != string(kv[string(key)]) {

@@ -188,6 +188,7 @@ func (in *inode) removeAt(i int) Item {
 
 func (in *inode) pop() Item {
 	it := (*in)[len(*in)-1]
+	(*in)[len(*in)-1] = nil
 	(*in) = (*in)[:len(*in)-1]
 	return it
 }
@@ -208,6 +209,7 @@ func (c *children) removeAt(i int) *node {
 
 func (c *children) pop() *node {
 	n := (*c)[len(*c)-1]
+	(*c)[len(*c)-1] = nil
 	(*c) = (*c)[:len(*c)-1]
 	return n
 }
@@ -279,6 +281,11 @@ func (t *BTree) Delete(key []byte) []byte {
 		return nil
 	}
 	it := t.root.remove(newKV(key, nil), t.minItem(), removeItem)
+	if len(t.root.inode) == 0 && len(t.root.children) > 0 {
+		emptyroot := t.root
+		t.root = t.root.children[0]
+		emptyroot.free()
+	}
 	kv, ok := it.(KV)
 	if !ok {
 		panic(fmt.Sprintf("DeleteKey returns invalid item: %v", it))
@@ -329,6 +336,7 @@ func (n *node) checkChildInodes(i int) {
 // set sets key-value in subtree, return old value
 func (n *node) set(it Item, maxItem int) Item {
 	found, i := n.inode.search(it)
+	n.check()
 	if len(n.children) > 0 {
 		n.checkChildInodes(i)
 	}
@@ -345,7 +353,7 @@ func (n *node) set(it Item, maxItem int) Item {
 		n.inode.insertAt(i, it)
 		return nil
 	}
-	n.inode.check()
+	// n.inode.check()
 	// Check whether child i need split
 	child := n.children[i]
 
@@ -436,7 +444,7 @@ func (n *node) remove(it Item, minItem int, typ toRemove) Item {
 		panic("Invalid remove type")
 	}
 	if len(n.children[i].inode) <= minItem {
-		fmt.Printf("node %d has %d inode <= %d, grow\n", n.children[i].id, len(n.children[i].inode), minItem)
+		fmt.Printf("child(%d) %d has %d inode <= %d, grow\n", i, n.children[i].id, len(n.children[i].inode), minItem)
 		return n.growChildAndRemove(it, i, minItem, typ)
 	}
 	if found {
@@ -448,7 +456,6 @@ func (n *node) remove(it Item, minItem int, typ toRemove) Item {
 }
 
 func (n *node) growChildAndRemove(it Item, i, minItem int, typ toRemove) Item {
-	// FIXME: panic happens
 	n.children[i].check()
 	if i > 0 && len(n.children[i-1].inode) > minItem {
 		fmt.Println("Borrow from left sibling")
@@ -474,14 +481,13 @@ func (n *node) growChildAndRemove(it Item, i, minItem int, typ toRemove) Item {
 		fmt.Println("Merging")
 		// Merge with right child
 		left := n.children[i]
-		right := n.children[i+1]
+		right := n.children.removeAt(i + 1)
 		left.inode = append(left.inode, n.inode.removeAt(i))
 		left.inode = append(left.inode, right.inode...)
 		left.children = append(left.children, right.children...)
 		right.free()
 	}
 	n.children[i].check()
-	// FIXME: endless loop here!
 	return n.remove(it, minItem, typ)
 }
 
