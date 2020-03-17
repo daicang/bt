@@ -2,9 +2,15 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/daicang/bt/pkg/btree"
 )
+
+type db struct {
+	path string
+	file *os.File
+}
 
 func main() {
 	t := btree.New(3)

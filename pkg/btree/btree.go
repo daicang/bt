@@ -1,6 +1,3 @@
-// Thanks to following projects:
-// btree(https://github.com/google/btree)
-
 package btree
 
 import (
@@ -8,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+
+	"github.com/daicang/bt/pkg/page"
 )
 
 const (
@@ -504,4 +503,17 @@ func (n *node) split(i int) (Item, *node) {
 		n.children = n.children[:i+1]
 	}
 	return item, new
+}
+
+func (n *node) write(p *page.Page) {
+	if len(n.children) == 0 {
+		p.flags |= page.LeafPageFlag
+	} else {
+		p.flags |= page.InternalPageFlag
+	}
+	p.count = len(n.inode)
+	for _, inode := range n.inode {
+
+	}
+
 }

@@ -1,10 +1,13 @@
+# BT
+A simple key-value storage using B-Tree
 
+### Inspired by
 
-Bugs:
-- Sometimes can not get() after split node
+[BTree](https://github.com/google/btree) for B-Tree implementation
+[BoltDB](https://github.com/boltdb/bolt) for using mmap
 
-TODO:
+### TODO
 
 - [x] Finish btree indexing
-- [] Finish btree deleting logic
-- [] Implement b+tree indexing
+- [x] Finish btree deleting logic
+- [] Implement mmap
