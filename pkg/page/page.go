@@ -12,16 +12,11 @@ const (
 
 var defaultPageSize = os.Getpagesize()
 
-type pgid uint64
+type Pgid uint64
 
 type Page struct {
-	id    pgid
+	ID    Pgid
 	flags uint16
 	count uint16
 	ptr   uintptr
 }
-
-type
-
-
-func
