@@ -5,6 +5,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/daicang/bt/pkg/config"
 	"github.com/daicang/bt/pkg/page"
 )
 
@@ -12,9 +13,7 @@ const (
 	maxMapSize = 0xFFFFFFFFFFFF
 )
 
-var (
-	defaultPageSize = os.Getpagesize()
-)
+var ()
 
 type DB struct {
 	path    string
@@ -40,9 +39,9 @@ type meta struct {
 }
 
 func (db *DB) init() error {
-	buf := make([]byte, defaultPageSize*4)
+	buf := make([]byte, config.PageSize*4)
 	for i := 0; i < 2; i++ {
-		p := (*page.Page)(unsafe.Pointer(&buf[i*defaultPageSize]))
+		p := (*page.Page)(unsafe.Pointer(&buf[i*config.PageSize]))
 		p.ID = page.Pgid(i)
 	}
 	db.file.WriteAt()
@@ -52,7 +51,7 @@ func (db *DB) init() error {
 func main() {
 	var err error
 	db := &DB{
-		pagesz: defaultPageSize,
+		pagesz: config.PageSize,
 	}
 	db.file, err = os.OpenFile(db.path, os.O_CREATE, 0644)
 	if err != nil {
