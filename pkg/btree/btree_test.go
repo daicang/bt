@@ -66,7 +66,7 @@ func TestBTree_set(t *testing.T) {
 	for k, v := range kv {
 		fmt.Printf("\nSet/Get test (%d/%d), key=%s\n", caseID, totalCase, k)
 		caseID++
-		var lastIt Item
+		var lastIt KV
 		key := []byte(k)
 		value := []byte(v)
 		tr.Set(key, value)
@@ -77,9 +77,9 @@ func TestBTree_set(t *testing.T) {
 		if string(getValue) != string(value) {
 			t.Fatalf("key=%s, expected=%s, got=%s", string(key), string(value), string(getValue))
 		}
-		tr.Iterate(func(it Item, id int) {
+		tr.Iterate(func(it KV, id int) {
 			// fmt.Printf("%s(%d)\n", it, id)
-			if lastIt != nil && it.lessThan(lastIt) {
+			if len(lastIt.key) > 0 && it.key.lessThan(lastIt.key) {
 				inOrder = false
 			}
 			lastIt = it
@@ -108,11 +108,11 @@ func TestBTree_delete(t *testing.T) {
 		key := keys[p]
 		value := tr.Delete(key)
 		if string(value) != string(kv[string(key)]) {
-			t.Fatalf("Delete error: expected %s, get %s", kv[string(key)], value)
+			t.Fatalf("Expected %s, get %s", kv[string(key)], value)
 		}
 		found, _ := tr.Get(key)
 		if found {
-			t.Fatalf("Item %s not deleted", key)
+			t.Fatalf("Key %s not deleted", key)
 		}
 	}
 	fmt.Printf("PASS BTree Delete")

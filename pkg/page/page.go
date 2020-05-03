@@ -3,58 +3,60 @@ package page
 import "unsafe"
 
 const (
-	InternalPageFlag = 0x01
-	LeafPageFlag     = 0x02
-	MaxAllocSize     = 0xFFFFFFF
-	maxPageIndex     = 0x7FFFFFF
+	InternalPageFlag     = 0x01
+	LeafPageFlag         = 0x02
+	MaxAllocSize         = 0xFFFFFFF
+	maxPageIndex         = 0x7FFFFFF
+	InnerPageElementSize = int(unsafe.Sizeof(InnerPageElement{}))
+	LeafPageElementSize  = int(unsafe.Sizeof(LeafPageElement{}))
 )
 
 type Pgid uint64
 
 type Page struct {
 	ID    Pgid
-	flags uint16
-	count uint16
-	data  uintptr
+	Flags uint16
+	Count uint16
+	Data  uintptr
 }
 
-type leafPageElement struct {
-	offset  int
-	keysz   int
-	valuesz int
+type LeafPageElement struct {
+	Offset  uint32
+	Keysz   uint32
+	Valuesz uint32
 }
 
-type innerPageElement struct {
-	offset  int
-	childID Pgid
-	keysz   int
-	valuesz int
+type InnerPageElement struct {
+	Offset  uint32
+	Keysz   uint32
+	Valuesz uint32
+	ChildID Pgid
 }
 
-func (p *Page) leafPageElement(index int) *leafPageElement {
-	return &(*[maxPageIndex]leafPageElement)(unsafe.Pointer(&p.data))
+func (p *Page) LeafPageElement(index uint16) *LeafPageElement {
+	return &((*[maxPageIndex]LeafPageElement)(unsafe.Pointer(&p.Data)))[index]
 }
 
-func (p *Page) innerPageElement(index int) *innerPageElement {
-	return &(*[maxPageIndex]innerPageElement)(unsafe.Pointer(&p.data))
+func (p *Page) InnerPageElement(index uint16) *InnerPageElement {
+	return &((*[maxPageIndex]InnerPageElement)(unsafe.Pointer(&p.Data))[index])
 }
 
-func (e *leafPageElement) key() []byte {
+func (e *LeafPageElement) Key() []byte {
 	buf := (*[MaxAllocSize]byte)(unsafe.Pointer(&e))
-	return buf[e.offset : e.offset+e.keysz]
+	return buf[e.Offset : e.Offset+e.Keysz]
 }
 
-func (e *leafPageElement) value() []byte {
+func (e *LeafPageElement) Value() []byte {
 	buf := (*[MaxAllocSize]byte)(unsafe.Pointer(&e))
-	return buf[e.offset+e.keysz : e.offset+e.keysz+e.valuesz]
+	return buf[e.Offset+e.Keysz : e.Offset+e.Keysz+e.Valuesz]
 }
 
-func (e *innerPageElement) key() []byte {
+func (e *InnerPageElement) Key() []byte {
 	buf := (*[MaxAllocSize]byte)(unsafe.Pointer(&e))
-	return buf[e.offset : e.offset+e.keysz]
+	return buf[e.Offset : e.Offset+e.Keysz]
 }
 
-func (e *innerPageElement) value() []byte {
+func (e *InnerPageElement) Value() []byte {
 	buf := (*[MaxAllocSize]byte)(unsafe.Pointer(&e))
-	return buf[e.offset+e.keysz : e.offset+e.keysz+e.valuesz]
+	return buf[e.Offset+e.Keysz : e.Offset+e.Keysz+e.Valuesz]
 }

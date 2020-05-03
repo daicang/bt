@@ -1,74 +1,14 @@
 package btree
 
 import (
-	"bytes"
 	"fmt"
+	"io"
 	"sort"
-	"sync"
+	"strings"
+	"unsafe"
 
 	"github.com/daicang/bt/pkg/page"
 )
-
-const (
-	defaultFreeListSize = 32
-)
-
-// Item is the element type
-type Item interface {
-	lessThan(Item) bool
-	equalTo(Item) bool
-}
-
-// KV implements Item
-type KV struct {
-	key   []byte
-	value []byte
-}
-
-// newKV creates a new KV
-func newKV(key, value []byte) Item {
-	return KV{
-		key:   key,
-		value: value,
-	}
-}
-
-func (kv KV) lessThan(other Item) bool {
-	otherKV, ok := other.(KV)
-	if !ok {
-		return false
-	}
-	return bytes.Compare(kv.key, otherKV.key) == -1
-}
-
-func (kv KV) equalTo(other Item) bool {
-	otherKV, ok := other.(KV)
-	if !ok {
-		return false
-	}
-	return bytes.Equal(kv.key, otherKV.key)
-}
-
-func (kv KV) String() string {
-	return string(kv.key)
-}
-
-type freeList struct {
-	mu   *sync.Mutex
-	list []*node
-}
-
-func newFreeList(size int) *freeList {
-	return &freeList{
-		mu: &sync.Mutex{},
-		// Size won't change. Must set 0 or go would think list already has item
-		list: make([]*node, 0, size),
-	}
-}
-
-func (f *freeList) getSize() int {
-	return len(f.list)
-}
 
 func (t *BTree) newNode() *node {
 	t.freeList.mu.Lock()
@@ -92,7 +32,7 @@ func (n *node) free() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(f.list) < cap(f.list) {
-		n.inode = []Item{}
+		n.inodes = []KV{}
 		n.children = []*node{}
 		f.list = append(f.list, n)
 	}
@@ -106,23 +46,22 @@ type BTree struct {
 	freeList *freeList
 }
 
-type inode []Item
-
+type inode []KV
 type children []*node
 
 // len(children) is 0 or len(inodes) + 1
 type node struct {
 	id       int
 	tree     *BTree
-	inode    inode
+	inodes   inode
 	children children
 }
 
 func (in inode) check() {
-	var last Item
+	var last KV
 	for _, curr := range in {
-		if last != nil {
-			if curr.lessThan(last) {
+		if len(last.key) > 0 {
+			if curr.key.lessThan(last.key) {
 				for _, p := range in {
 					fmt.Printf(" %s", p)
 				}
@@ -135,59 +74,58 @@ func (in inode) check() {
 }
 
 // search returns (found, firstGreaterEqIndex)
-func (in inode) search(it Item) (bool, int) {
+func (in inode) search(key keyType) (bool, int) {
 	in.check()
 	i := sort.Search(len(in), func(i int) bool {
 		// Return index of first item greater then it
-		return it.lessThan(in[i])
+		return key.lessThan(in[i].key)
 	})
-	if i > 0 && it.equalTo(in[i-1]) {
+	if i > 0 && key.equalTo(in[i-1].key) {
 		return true, i - 1
 	}
 	return false, i
 }
 
 // set inserts or replaces item into inode
-func (in *inode) set(it Item) {
-	found, i := in.search(it)
+func (in *inode) set(kv KV) {
+	found, i := in.search(kv.key)
 	if found {
-		(*in)[i] = it
+		(*in)[i] = kv
 	} else {
-		in.insertAt(i, it)
+		in.insertAt(i, kv)
 	}
-	in.check()
+	// in.check()
 }
 
 // insert inserts it at given position, pushing subsequent values
-func (in *inode) insertAt(i int, it Item) {
-	in.check()
-
-	if i > 0 && it.lessThan((*in)[i-1]) {
-		fmt.Printf("1: %d %s %s\n", i, (*in)[i-1], it)
-		panic("insert: left inconsistent")
-	}
-	if i < len(*in) && (*in)[i].lessThan(it) {
-		fmt.Printf("2: %d %s %s\n", i, it, (*in)[i])
-		panic("insert: right inconsistent")
-	}
-	*in = append((*in), nil)
+func (in *inode) insertAt(i int, kv KV) {
+	// in.check()
+	// if i > 0 && it.lessThan((*in)[i-1]) {
+	// 	fmt.Printf("1: %d %s %s\n", i, (*in)[i-1], it)
+	// 	panic("insert: left inconsistent")
+	// }
+	// if i < len(*in) && (*in)[i].lessThan(it) {
+	// 	fmt.Printf("2: %d %s %s\n", i, it, (*in)[i])
+	// 	panic("insert: right inconsistent")
+	// }
+	*in = append((*in), KV{})
 	copy((*in)[i+1:], (*in)[i:])
-	(*in)[i] = it
-	in.check()
+	(*in)[i] = kv
+	// in.check()
 }
 
-// remove removes item at given index
-func (in *inode) removeAt(i int) Item {
+// remove removes and return KV at given index
+func (in *inode) removeAt(i int) KV {
 	it := (*in)[i]
 	copy((*in)[i:], (*in)[i+1:])
-	(*in)[len(*in)-1] = nil
+	(*in)[len(*in)-1] = KV{}
 	(*in) = (*in)[:len(*in)-1]
 	return it
 }
 
-func (in *inode) pop() Item {
+func (in *inode) pop() KV {
 	it := (*in)[len(*in)-1]
-	(*in)[len(*in)-1] = nil
+	(*in)[len(*in)-1] = KV{}
 	(*in) = (*in)[:len(*in)-1]
 	return it
 }
@@ -237,81 +175,71 @@ func (t *BTree) Iterate(iter iterator) {
 	t.root.iterate(iter)
 }
 
-// Get returns (found, item) in btree
+// Get returns (found, value) for given key
 func (t *BTree) Get(key []byte) (bool, []byte) {
 	fmt.Printf("Get %s\n", key)
 	if t.root == nil {
 		return false, nil
 	}
-	it := newKV(key, nil)
-	found, result := t.root.get(it)
-	if found {
-		resultKV, _ := result.(KV)
-		return true, resultKV.value
-	}
-	return false, nil
+	return t.root.get(key)
 }
 
 // Set insert or replace an item in btree
-func (t *BTree) Set(key, value []byte) {
+func (t *BTree) Set(key keyType, value []byte) {
 	fmt.Printf("Set %s=%s\n", key, value)
 	it := newKV(key, value)
 	if t.root == nil {
 		t.root = t.newNode()
-		t.root.inode.insertAt(0, it)
+		t.root.inodes.insertAt(0, it)
 		return
 	}
-	if len(t.root.inode) >= t.maxItem() {
+	if len(t.root.inodes) >= t.maxItem() {
 		// Split root and place new root
 		oldRoot := t.root
 		t.root = t.newNode()
 		index, second := oldRoot.split(t.maxItem() / 2)
-		t.root.inode = append(t.root.inode, index)
+		t.root.inodes = append(t.root.inodes, index)
 		t.root.children = append(t.root.children, oldRoot)
 		t.root.children = append(t.root.children, second)
 		fmt.Printf("Split root\n")
 	}
-	t.root.set(it, t.maxItem())
+	t.root.set(key, value, t.maxItem())
 }
 
 // Delete removes an item, return value if exist
-func (t *BTree) Delete(key []byte) []byte {
+func (t *BTree) Delete(key keyType) []byte {
 	if t.root == nil {
 		return nil
 	}
-	it := t.root.remove(newKV(key, nil), t.minItem(), removeItem)
-	if len(t.root.inode) == 0 && len(t.root.children) > 0 {
+	removed := t.root.remove(key, t.minItem())
+	if len(t.root.inodes) == 0 && len(t.root.children) > 0 {
 		emptyroot := t.root
 		t.root = t.root.children[0]
 		emptyroot.free()
 	}
-	kv, ok := it.(KV)
-	if !ok {
-		panic(fmt.Sprintf("DeleteKey returns invalid item: %v", it))
-	}
-	return kv.value
+	return removed.value
 }
 
-// get returns (found, Item)
-func (n *node) get(it Item) (bool, Item) {
-	found, i := n.inode.search(it)
+// get returns (found, value) from given key
+func (n *node) get(key keyType) (bool, []byte) {
+	found, i := n.inodes.search(key)
 	if found {
-		return true, n.inode[i]
+		return true, n.inodes[i].value
 	}
 	if len(n.children) == 0 {
-		// We have reached leaf
+		// Leaf
 		return false, nil
 	}
 	n.checkChildInodes(i)
-	return n.children[i].get(it)
+	return n.children[i].get(key)
 }
 
 // check checks 1. inode is sorted 2. for internal nodes, len(inode) = len(children) - 1
 func (n *node) check() {
-	n.inode.check()
+	n.inodes.check()
 	if len(n.children) > 0 {
-		if len(n.inode) != len(n.children)-1 {
-			panic(fmt.Sprintf("node %d has %d inode, %d children\n", n.id, len(n.inode), len(n.children)))
+		if len(n.inodes) != len(n.children)-1 {
+			panic(fmt.Sprintf("node %d has %d inode, %d children\n", n.id, len(n.inodes), len(n.children)))
 		}
 	}
 }
@@ -320,21 +248,21 @@ func (n *node) checkChildInodes(i int) {
 	// inode[i-1] < all inode in child[i] < inode[i]
 	// fmt.Printf("Checking node %d\n", n.id)
 	child := n.children[i]
-	for _, childInode := range child.inode {
-		if i > 0 && childInode.lessThan(n.inode[i-1]) {
-			fmt.Printf("error: child inode=%s inode[i-1]=%s\n", childInode, n.inode[i-1])
+	for _, childInode := range child.inodes {
+		if i > 0 && childInode.key.lessThan(n.inodes[i-1].key) {
+			fmt.Printf("error: child key=%s < inode[i-1] key=%s\n", childInode.key, n.inodes[i-1].key)
 			panic("Split: new inode error 1")
 		}
-		if i < len(n.inode) && n.inode[i].lessThan(childInode) {
-			fmt.Printf("error: child inode=%s inode[i]=%s\n", childInode, n.inode[i])
+		if i < len(n.inodes)-1 && n.inodes[i].key.lessThan(childInode.key) {
+			fmt.Printf("error: child key=%s >= inode[i] key=%s\n", childInode.key, n.inodes[i].key)
 			panic("Split: new inode error 2")
 		}
 	}
 }
 
-// set sets key-value in subtree, return old value
-func (n *node) set(it Item, maxItem int) Item {
-	found, i := n.inode.search(it)
+// set sets value to given key in subtree, return old value
+func (n *node) set(key keyType, value []byte, maxItem int) []byte {
+	found, i := n.inodes.search(key)
 	n.check()
 	if len(n.children) > 0 {
 		n.checkChildInodes(i)
@@ -342,22 +270,22 @@ func (n *node) set(it Item, maxItem int) Item {
 	if found {
 		// Item already in index, rewrite
 		// fmt.Println("rewrite index")
-		old := n.inode[i]
-		n.inode[i] = it
-		return old
+		oldValue := n.inodes[i].value
+		n.inodes[i].value = value
+		return oldValue
 	}
 	// Leaf node, add to index
 	if len(n.children) == 0 {
 		// fmt.Printf(" insert leaf at node=%d index=%d\n", n.id, i)
-		n.inode.insertAt(i, it)
+		n.inodes.insertAt(i, newKV(key, value))
 		return nil
 	}
 	// n.inode.check()
 	// Check whether child i need split
 	child := n.children[i]
 
-	if len(child.inode) > maxItem {
-		fmt.Printf("Split child %d at %d/%d\n", i, maxItem/2, len(child.inode))
+	if len(child.inodes) > maxItem {
+		fmt.Printf("Split child %d at %d/%d\n", i, maxItem/2, len(child.inodes))
 
 		newIndex, newChild := child.split(maxItem / 2)
 
@@ -365,155 +293,231 @@ func (n *node) set(it Item, maxItem int) Item {
 		// newChild.inode.check()
 		// n.inode.check()
 
-		n.inode.insertAt(i, newIndex)
+		n.inodes.insertAt(i, newIndex)
 
 		n.children.insertAt(i+1, newChild)
-		if it.equalTo(newIndex) {
-			old := n.inode[i]
-			n.inode[i] = it
-			return old
+		if key.equalTo(newIndex.key) {
+			oldValue := n.inodes[i].value
+			n.inodes[i].value = value
+			return oldValue
 		}
-		if newIndex.lessThan(it) {
+		if newIndex.key.lessThan(key) {
 			i++
 		}
 	}
 	// n.checkChildInodes(i)
 	// fmt.Printf("(%d) Insert into child node %d\n", n.id, n.children[i].id)
-	ret := n.children[i].set(it, maxItem)
+	ret := n.children[i].set(key, value, maxItem)
 	n.checkChildInodes(i)
 	return ret
 }
 
-type iterator func(Item, int)
+// iterator function receives KV and nodeID
+type iterator func(KV, int)
 
 func (n *node) iterate(iter iterator) {
 	hasChild := false
 	if len(n.children) > 0 {
 		hasChild = true
 	}
-	for index := 0; index < len(n.inode); index++ {
+	for index := 0; index < len(n.inodes); index++ {
 		if hasChild {
 			n.children[index].iterate(iter)
 		}
-		iter(n.inode[index], n.id)
+		iter(n.inodes[index], n.id)
 	}
 	if hasChild {
-		n.children[len(n.inode)].iterate(iter)
+		n.children[len(n.inodes)].iterate(iter)
 	}
 }
 
-type toRemove int
+func (n *node) remove(key keyType, minItem int) KV {
+	removedValue := n.removeKey(key, minItem)
+	if len(removedValue) > 0 {
+		return newKV(key, removedValue)
+	}
+	return KV{}
+}
 
-const (
-	removeItem toRemove = iota
-	removeMin
-	removeMax
-)
-
-// remove removes specified or minium/maxium item from current node,
-// returns the removed item.
-func (n *node) remove(it Item, minItem int, typ toRemove) Item {
+func (n *node) removeMin(minItem int) KV {
 	if len(n.children) == 0 {
-		switch typ {
-		case removeItem:
-			found, i := n.inode.search(it)
-			if found {
-				return n.inode.removeAt(i)
-			}
-			return nil
-		case removeMin:
-			return n.inode.removeAt(0)
-		case removeMax:
-			return n.inode.pop()
-		default:
-			panic("Invalid remove type")
+		return n.inodes.removeAt(0)
+	}
+	if len(n.children[0].inodes) <= minItem {
+		n.extendChild(0, minItem)
+	}
+	return n.children[0].removeMin(minItem)
+}
+
+func (n *node) removeMax(minItem int) KV {
+	if len(n.children) == 0 {
+		return n.inodes.pop()
+	}
+	if len(n.children[len(n.children)-1].inodes) <= minItem {
+		n.extendChild(len(n.children)-1, minItem)
+	}
+	return n.children[len(n.children)-1].removeMax(minItem)
+}
+
+func (n *node) removeKey(key keyType, minItem int) []byte {
+	found, i := n.inodes.search(key)
+	if len(n.children) == 0 {
+		if found {
+			return n.inodes.removeAt(i).value
 		}
+		return nil
 	}
-	// Now node must have child. All 3 types would invoke remove on child
-	var i int
-	var found bool
-	switch typ {
-	case removeItem:
-		found, i = n.inode.search(it)
-	case removeMin:
-		i = 0
-	case removeMax:
-		i = len(n.inode)
-	default:
-		panic("Invalid remove type")
-	}
-	if len(n.children[i].inode) <= minItem {
-		fmt.Printf("child(%d) %d has %d inode <= %d, grow\n", i, n.children[i].id, len(n.children[i].inode), minItem)
-		return n.growChildAndRemove(it, i, minItem, typ)
+	// Must check child before removeMax
+	if len(n.children[i].inodes) <= minItem {
+		n.extendChild(i, minItem)
+		found, i = n.inodes.search(key)
 	}
 	if found {
-		removed := n.inode[i]
-		n.inode[i] = n.children[i].remove(it, minItem, removeMax)
+		removed := n.inodes[i].value
+		n.inodes[i] = n.children[i].removeMax(minItem)
 		return removed
 	}
-	return n.children[i].remove(it, minItem, typ)
+	n.checkChildInodes(i)
+	return n.children[i].removeKey(key, minItem)
 }
 
-func (n *node) growChildAndRemove(it Item, i, minItem int, typ toRemove) Item {
-	n.children[i].check()
-	if i > 0 && len(n.children[i-1].inode) > minItem {
+func (n *node) extendChild(i, minItem int) int {
+	if i > 0 && len(n.children[i-1].inodes) > minItem {
 		fmt.Println("Borrow from left sibling")
-		// Borrow from left sibling
-		n.children[i].inode.insertAt(0, n.inode[i-1])
-		n.inode[i-1] = n.children[i-1].inode.pop()
-		if len(n.children[i-1].children) > 0 {
-			n.children[i].children.insertAt(0, n.children[i-1].children.pop())
-		}
-	} else if i < len(n.children)-1 && len(n.children[i+1].inode) > minItem {
-		fmt.Println("Borrow from right sibling")
-		// Borrow from right sibling
-		n.children[i].inode = append(n.children[i].inode, n.inode[i])
-		n.inode[i] = n.children[i+1].inode.removeAt(0)
-		if len(n.children[i+1].children) > 0 {
-			n.children[i].children = append(n.children[i].children, n.children[i+1].children.removeAt(0))
-		}
-	} else {
-		if i >= len(n.children)-1 {
-			// i is the rightmost child
-			i--
-		}
-		fmt.Println("Merging")
-		// Merge with right child
-		left := n.children[i]
-		right := n.children.removeAt(i + 1)
-		left.inode = append(left.inode, n.inode.removeAt(i))
-		left.inode = append(left.inode, right.inode...)
-		left.children = append(left.children, right.children...)
-		right.free()
+		n.extendChildWithLeftSibling(i)
+		return i
 	}
-	n.children[i].check()
-	return n.remove(it, minItem, typ)
+	if i < len(n.children)-1 && len(n.children[i+1].inodes) > minItem {
+		fmt.Println("Borrow from right sibling")
+		n.extendChildWithRightSibling(i)
+		return i
+	}
+	if i == len(n.children)-1 {
+		// i is the rightmost child
+		i--
+	}
+	fmt.Println("Merging")
+	n.mergeChildWithRightSibling(i)
+	return i
+}
+
+func (n *node) extendChildWithLeftSibling(i int) {
+	child := n.children[i]
+	leftSibling := n.children[i-1]
+	child.inodes.insertAt(0, n.inodes[i-1])
+	n.inodes[i-1] = leftSibling.inodes.pop()
+	if len(child.children) > 0 {
+		child.children.insertAt(0, leftSibling.children.pop())
+	}
+}
+
+func (n *node) extendChildWithRightSibling(i int) {
+	child := n.children[i]
+	rightSibling := n.children[i+1]
+	child.inodes = append(child.inodes, n.inodes[i])
+	n.inodes[i] = rightSibling.inodes.removeAt(0)
+	if len(child.children) > 0 {
+		child.children = append(child.children, rightSibling.children.removeAt(0))
+	}
+}
+
+func (n *node) mergeChildWithRightSibling(i int) {
+	child := n.children[i]
+	rightSibling := n.children.removeAt(i + 1)
+	child.inodes = append(child.inodes, n.inodes.removeAt(i))
+	child.inodes = append(child.inodes, rightSibling.inodes...)
+	child.children = append(child.children, rightSibling.children...)
+	rightSibling.free()
+}
+
+func (n *node) print(w io.Writer, level int) {
+	fmt.Fprintf(w, "%sNODE:%v\n", strings.Repeat("  ", level), n.inodes)
+	for _, c := range n.children {
+		c.print(w, level+1)
+	}
 }
 
 // split Splits node at given index, return element at index and new node
-func (n *node) split(i int) (Item, *node) {
-	n.inode.check()
+func (n *node) split(i int) (KV, *node) {
+	n.inodes.check()
 	new := n.tree.newNode()
-	item := n.inode[i]
+	kv := n.inodes[i]
 	// Never use direct slice slicing!! Causes very wired bug
-	new.inode = append(new.inode, n.inode[i+1:]...)
-	n.inode = n.inode[:i]
+	new.inodes = append(new.inodes, n.inodes[i+1:]...)
+	n.inodes = n.inodes[:i]
 	if len(n.children) > 0 {
 		new.children = append(new.children, n.children[i+1:]...)
 		n.children = n.children[:i+1]
 	}
-	return item, new
+	return kv, new
 }
 
-func (n *node) write(p *page.Page) {
-	if len(n.children) == 0 {
-		p.flags |= page.LeafPageFlag
-	} else {
-		p.flags |= page.InternalPageFlag
-	}
-	p.count = len(n.inode)
-	for _, inode := range n.inode {
+// read initializes node from page
+func (n *node) read(p *page.Page) {
+	isLeaf := ((p.Flags & page.LeafPageFlag) != 0)
+	n.inodes = make(inode, int(p.Count))
 
+	for i := 0; i < int(p.Count); i++ {
+		inode := &n.inodes[i]
+		if isLeaf {
+			elem := p.LeafPageElement(uint16(i))
+			// inode.flags = elem.flags
+			inode.key = elem.Key()
+			inode.value = elem.Value()
+		} else {
+			elem := p.InnerPageElement(uint16(i))
+			// inode.pgid = elem.pgid
+			inode.key = elem.Key()
+			inode.value = elem.Value()
+		}
+		// _assert(len(inode.key) > 0, "read: zero-length inode key")
 	}
+
+	// Save first key so we can find the node in the parent when we spill.
+	// if len(n.inodes) > 0 {
+	// 	n.key = n.inodes[0].key
+	// 	_assert(len(n.key) > 0, "read: zero-length node key")
+	// } else {
+	// 	n.key = nil
+	// }
+}
+
+// write writes node to a page
+func (n *node) write(p *page.Page) {
+	p.Count = uint16(len(n.inodes))
+	if len(n.children) == 0 {
+		p.Flags |= page.LeafPageFlag
+		b := (*[page.MaxAllocSize]byte)(unsafe.Pointer(&p.Data))[len(n.inodes)*page.LeafPageElementSize:]
+		for index, inode := range n.inodes {
+			elem := p.InnerPageElement(uint16(index))
+			elem.Keysz = uint32(len(inode.key))
+			elem.Valuesz = uint32(len(inode.value))
+			elem.Offset = uint32(uintptr(unsafe.Pointer(&b[0])) - uintptr(unsafe.Pointer(elem)))
+			copy(b[0:], inode.key)
+			b = b[len(inode.key):]
+			copy(b[0:], inode.value)
+			b = b[len(inode.value):]
+		}
+	} else {
+		p.Flags |= page.InternalPageFlag
+		b := (*[page.MaxAllocSize]byte)(unsafe.Pointer(&p.Data))[len(n.inodes)*page.InnerPageElementSize:]
+		for index, inode := range n.inodes {
+			elem := p.LeafPageElement(uint16(index))
+			elem.Keysz = uint32(len(inode.key))
+			elem.Valuesz = uint32(len(inode.value))
+			elem.Offset = uint32(uintptr(unsafe.Pointer(&b[0])) - uintptr(unsafe.Pointer(elem)))
+			copy(b[0:], inode.key)
+			b = b[len(inode.key):]
+			copy(b[0:], inode.value)
+			b = b[len(inode.value):]
+			// ele.childid if is child node
+		}
+	}
+	// klen, vlen := len(item.key), len(item.value)
+	// if len(b) < klen+vlen {
+	// 	b = (*[maxAllocSize]byte)(unsafe.Pointer(&b[0]))[:]
+	// }
+
+	// p.data
 
 }
