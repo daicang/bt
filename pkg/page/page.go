@@ -3,60 +3,67 @@ package page
 import "unsafe"
 
 const (
-	InternalPageFlag     = 0x01
-	LeafPageFlag         = 0x02
-	MaxAllocSize         = 0xFFFFFFF
-	maxPageIndex         = 0x7FFFFFF
-	InnerPageElementSize = int(unsafe.Sizeof(InnerPageElement{}))
-	LeafPageElementSize  = int(unsafe.Sizeof(LeafPageElement{}))
+	// InternalFlag marks page as internal node
+	InternalFlag = 0x01
+
+	// LeafFlag marks page as leaf
+	LeafFlag = 0x02
+
+	MaxAllocSize = 0xFFFFFFF
+	maxPageIndex = 0x7FFFFFF
+	KVMetaSize   = int(unsafe.Sizeof(KVMeta{}))
 )
 
+// Pgid is page id
 type Pgid uint64
 
+// Page represents one mmap page
+// layout:
+// page struct | child pgid | child pgid | .. | (p.Data)meta | meta | .. | key | value | key | value | ..
 type Page struct {
-	ID    Pgid
+	// Each page has its index
+	ID Pgid
+	// Flag tell the page is leaf or not
 	Flags uint16
+	// Count is inode count
 	Count uint16
-	Data  uintptr
+	// ChildPtr points to starting address of children pgid array
+	// Empty when page is leaf
+	ChildPtr uintptr
+	// Meta points to starting address of KV metadata
+	MetaPtr uintptr
 }
 
-type LeafPageElement struct {
-	Offset  uint32
-	Keysz   uint32
+// KVMeta stores offset and size of one KV pair
+type KVMeta struct {
+	// Offset represents offset between KV content and this Meta struct
+	// in bytes
+	Offset uint32
+	// Keysz is the length of the key
+	Keysz uint32
+	// Valuesz is the length of the value
 	Valuesz uint32
 }
 
-type InnerPageElement struct {
-	Offset  uint32
-	Keysz   uint32
-	Valuesz uint32
-	ChildID Pgid
+// GetChildPgid returns child pgid for given index
+func (p *Page) GetChildPgid(index uint16) Pgid {
+	return (*[maxPageIndex]Pgid)(unsafe.Pointer(&p.ChildPtr))[index]
 }
 
-func (p *Page) LeafPageElement(index uint16) *LeafPageElement {
-	return &((*[maxPageIndex]LeafPageElement)(unsafe.Pointer(&p.Data)))[index]
+// GetKVMeta returns KVMeta for given index
+func (p *Page) GetKVMeta(index uint16) *KVMeta {
+	return &((*[maxPageIndex]KVMeta)(unsafe.Pointer(&p.MetaPtr)))[index]
 }
 
-func (p *Page) InnerPageElement(index uint16) *InnerPageElement {
-	return &((*[maxPageIndex]InnerPageElement)(unsafe.Pointer(&p.Data))[index])
+// Key returns the content of the key
+func (m *KVMeta) Key() []byte {
+	buf := (*[MaxAllocSize]byte)(unsafe.Pointer(&m))
+	return buf[m.Offset : m.Offset+m.Keysz]
 }
 
-func (e *LeafPageElement) Key() []byte {
-	buf := (*[MaxAllocSize]byte)(unsafe.Pointer(&e))
-	return buf[e.Offset : e.Offset+e.Keysz]
-}
-
-func (e *LeafPageElement) Value() []byte {
-	buf := (*[MaxAllocSize]byte)(unsafe.Pointer(&e))
-	return buf[e.Offset+e.Keysz : e.Offset+e.Keysz+e.Valuesz]
-}
-
-func (e *InnerPageElement) Key() []byte {
-	buf := (*[MaxAllocSize]byte)(unsafe.Pointer(&e))
-	return buf[e.Offset : e.Offset+e.Keysz]
-}
-
-func (e *InnerPageElement) Value() []byte {
-	buf := (*[MaxAllocSize]byte)(unsafe.Pointer(&e))
-	return buf[e.Offset+e.Keysz : e.Offset+e.Keysz+e.Valuesz]
+// Value returns the content of the value
+func (m *KVMeta) Value() []byte {
+	buf := (*[MaxAllocSize]byte)(unsafe.Pointer(&m))
+	begin := m.Offset + m.Keysz
+	return buf[begin : begin+m.Valuesz]
 }

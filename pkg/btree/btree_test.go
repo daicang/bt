@@ -117,3 +117,7 @@ func TestBTree_delete(t *testing.T) {
 	}
 	fmt.Printf("PASS BTree Delete")
 }
+
+func TestBTree_readwrite() {
+
+}

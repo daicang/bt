@@ -10,4 +10,4 @@ A simple key-value storage using B-Tree
 
 - [x] Finish btree indexing
 - [x] Finish btree deleting logic
-- [] Implement mmap
+- [ ] Implement mmap

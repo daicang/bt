@@ -15,7 +15,7 @@ type children []*node
 
 // len(children) is 0 or len(inodes) + 1
 type node struct {
-	id       int
+	pgid     page.Pgid
 	tree     *BTree
 	inodes   inode
 	children children
@@ -136,7 +136,7 @@ func (n *node) check() {
 	n.inodes.check()
 	if len(n.children) > 0 {
 		if len(n.inodes) != len(n.children)-1 {
-			panic(fmt.Sprintf("node %d has %d inode, %d children\n", n.id, len(n.inodes), len(n.children)))
+			panic(fmt.Sprintf("node %d has %d inode, %d children\n", n.pgid, len(n.inodes), len(n.children)))
 		}
 	}
 }
@@ -210,7 +210,7 @@ func (n *node) set(key keyType, value []byte, maxItem int) []byte {
 }
 
 // iterator function receives KV and nodeID
-type iterator func(KV, int)
+type iterator func(KV, page.Pgid)
 
 func (n *node) iterate(iter iterator) {
 	hasChild := false
@@ -221,7 +221,7 @@ func (n *node) iterate(iter iterator) {
 		if hasChild {
 			n.children[index].iterate(iter)
 		}
-		iter(n.inodes[index], n.id)
+		iter(n.inodes[index], n.pgid)
 	}
 	if hasChild {
 		n.children[len(n.inodes)].iterate(iter)
@@ -351,23 +351,30 @@ func (n *node) split(i int) (KV, *node) {
 
 // read initializes node from page
 func (n *node) read(p *page.Page) {
-	isLeaf := ((p.Flags & page.LeafPageFlag) != 0)
+	isLeaf := ((p.Flags & page.LeafFlag) != 0)
 	n.inodes = make(inode, int(p.Count))
+	n.pgid = p.ID
 
+	// Restore keys and values
 	for i := 0; i < int(p.Count); i++ {
 		inode := &n.inodes[i]
-		if isLeaf {
-			elem := p.LeafPageElement(uint16(i))
-			// inode.flags = elem.flags
-			inode.key = elem.Key()
-			inode.value = elem.Value()
-		} else {
+		kvm := p.GetKVMeta(uint16(i))
+		inode.key = kvm.Key()
+		inode.value = kvm.Value()
+	}
+
+	// Restore children
+	if !isLeaf {
+		n.children = make([]*node, int(p.Count)+1)
+		for i := 0; i < int(p.Count); i++ {
+			inode := &n.inodes[i]
 			elem := p.InnerPageElement(uint16(i))
 			// inode.pgid = elem.pgid
 			inode.key = elem.Key()
 			inode.value = elem.Value()
+
+			// _assert(len(inode.key) > 0, "read: zero-length inode key")
 		}
-		// _assert(len(inode.key) > 0, "read: zero-length inode key")
 	}
 
 	// Save first key so we can find the node in the parent when we spill.
@@ -382,34 +389,32 @@ func (n *node) read(p *page.Page) {
 // write writes node to a page
 func (n *node) write(p *page.Page) {
 	p.Count = uint16(len(n.inodes))
-	if len(n.children) == 0 {
-		p.Flags |= page.LeafPageFlag
-		b := (*[page.MaxAllocSize]byte)(unsafe.Pointer(&p.Data))[len(n.inodes)*page.LeafPageElementSize:]
-		for index, inode := range n.inodes {
-			elem := p.InnerPageElement(uint16(index))
-			elem.Keysz = uint32(len(inode.key))
-			elem.Valuesz = uint32(len(inode.value))
-			elem.Offset = uint32(uintptr(unsafe.Pointer(&b[0])) - uintptr(unsafe.Pointer(elem)))
-			copy(b[0:], inode.key)
-			b = b[len(inode.key):]
-			copy(b[0:], inode.value)
-			b = b[len(inode.value):]
+	if len(n.children) != 0 {
+		p.Flags |= page.InternalFlag
+		childArr := (*[page.MaxAllocSize]page.Pgid)(unsafe.Pointer(p.ChildPtr))
+		for i, child := range n.children {
+			childArr[i] = child.pgid
 		}
 	} else {
-		p.Flags |= page.InternalPageFlag
-		b := (*[page.MaxAllocSize]byte)(unsafe.Pointer(&p.Data))[len(n.inodes)*page.InnerPageElementSize:]
-		for index, inode := range n.inodes {
-			elem := p.LeafPageElement(uint16(index))
-			elem.Keysz = uint32(len(inode.key))
-			elem.Valuesz = uint32(len(inode.value))
-			elem.Offset = uint32(uintptr(unsafe.Pointer(&b[0])) - uintptr(unsafe.Pointer(elem)))
-			copy(b[0:], inode.key)
-			b = b[len(inode.key):]
-			copy(b[0:], inode.value)
-			b = b[len(inode.value):]
-			// ele.childid if is child node
-		}
+		p.Flags |= page.LeafFlag
 	}
+
+	b := (*[page.MaxAllocSize]byte)(unsafe.Pointer(&p.MetaPtr))[len(n.inodes)*page.KVMetaSize:]
+	for i, inode := range n.inodes {
+		// Write KVMeta
+		kvm := p.GetKVMeta(uint16(i))
+		kvm.Keysz = uint32(len(inode.key))
+		kvm.Valuesz = uint32(len(inode.value))
+		kvm.Offset = uint32(uintptr(unsafe.Pointer(&b[0])) - uintptr(unsafe.Pointer(kvm)))
+		// Write key and value
+		copy(b[0:], inode.key)
+		b = b[len(inode.key):]
+		copy(b[0:], inode.value)
+		b = b[len(inode.value):]
+	}
+
+	// Page overflow
+
 	// klen, vlen := len(item.key), len(item.value)
 	// if len(b) < klen+vlen {
 	// 	b = (*[maxAllocSize]byte)(unsafe.Pointer(&b[0]))[:]
