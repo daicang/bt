@@ -1,4 +1,4 @@
-package btree
+package bt
 
 import (
 	"bytes"
@@ -6,11 +6,12 @@ import (
 )
 
 type keyType []byte
+type valueType []byte
 
 // KV is key-value type stored in btree
 type KV struct {
 	key   keyType
-	value []byte
+	value valueType
 }
 
 func (key keyType) lessThan(other keyType) bool {

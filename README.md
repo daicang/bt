@@ -1,5 +1,5 @@
 # BT
-A simple key-value storage using B-Tree
+A simple B+Tree key-value db
 
 ### Inspired by
 
@@ -10,4 +10,5 @@ A simple key-value storage using B-Tree
 
 - [x] Finish btree indexing
 - [x] Finish btree deleting logic
+- [ ] Use b+tree instead of b-tree
 - [ ] Implement mmap

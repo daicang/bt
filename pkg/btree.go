@@ -1,4 +1,4 @@
-package btree
+package bt
 
 import (
 	"fmt"
@@ -13,10 +13,63 @@ import (
 type inode []KV
 type children []*node
 
+// tree is in-memory b+tree index
+type tree struct {
+	root     *node
+	degree   int
+	length   int
+	freeList *freeList
+}
+
+// Get returns (found, value) for given key
+func (t *tree) Get(key []byte) (bool, []byte) {
+	fmt.Printf("Get %s\n", key)
+	if t.root == nil {
+		return false, nil
+	}
+	return t.root.get(key)
+}
+
+// Set insert or replace an item in btree
+func (t *tree) Set(key keyType, value []byte) {
+	fmt.Printf("Set %s=%s\n", key, value)
+	it := newKV(key, value)
+	if t.root == nil {
+		t.root = t.newNode()
+		t.root.inodes.insertAt(0, it)
+		return
+	}
+	if len(t.root.inodes) >= t.maxItem() {
+		// Split root and place new root
+		oldRoot := t.root
+		t.root = t.newNode()
+		index, second := oldRoot.split(t.maxItem() / 2)
+		t.root.inodes = append(t.root.inodes, index)
+		t.root.children = append(t.root.children, oldRoot)
+		t.root.children = append(t.root.children, second)
+		fmt.Printf("Split root\n")
+	}
+	t.root.set(key, value, t.maxItem())
+}
+
+// Delete removes an item, return value if exist
+func (t *btree) Delete(key keyType) []byte {
+	if t.root == nil {
+		return nil
+	}
+	removed := t.root.remove(key, t.minItem())
+	if len(t.root.inodes) == 0 && len(t.root.children) > 0 {
+		emptyroot := t.root
+		t.root = t.root.children[0]
+		emptyroot.free()
+	}
+	return removed.value
+}
+
 // len(children) is 0 or len(inodes) + 1
 type node struct {
 	pgid     page.Pgid
-	tree     *BTree
+	tree     *btree
 	inodes   inode
 	children children
 }
@@ -367,23 +420,9 @@ func (n *node) read(p *page.Page) {
 	if !isLeaf {
 		n.children = make([]*node, int(p.Count)+1)
 		for i := 0; i < int(p.Count); i++ {
-			inode := &n.inodes[i]
-			elem := p.InnerPageElement(uint16(i))
-			// inode.pgid = elem.pgid
-			inode.key = elem.Key()
-			inode.value = elem.Value()
-
-			// _assert(len(inode.key) > 0, "read: zero-length inode key")
+			// TODO
 		}
 	}
-
-	// Save first key so we can find the node in the parent when we spill.
-	// if len(n.inodes) > 0 {
-	// 	n.key = n.inodes[0].key
-	// 	_assert(len(n.key) > 0, "read: zero-length node key")
-	// } else {
-	// 	n.key = nil
-	// }
 }
 
 // write writes node to a page
@@ -422,4 +461,45 @@ func (n *node) write(p *page.Page) {
 
 	// p.data
 
+}
+
+// New returns a btree with given degree
+func New(degree int) *btree {
+	return &btree{
+		degree:   degree,
+		length:   0,
+		freeList: newFreeList(defaultFreeListSize),
+	}
+}
+
+func (t *btree) newNode() *node {
+	t.freeList.mu.Lock()
+	defer t.freeList.mu.Unlock()
+	t.length++
+	if len(t.freeList.list) == 0 {
+		return &node{
+			id:   t.length,
+			tree: t,
+		}
+	}
+	index := len(t.freeList.list) - 1
+	n := t.freeList.list[index]
+	t.freeList.list[index] = nil
+	t.freeList.list = t.freeList.list[:index]
+	return n
+}
+
+// maxItem returns the maxium items in a node
+func (t *btree) maxItem() int {
+	return t.degree*2 - 1
+}
+
+// minItem returns mininum items in a node, except the root node
+func (t *btree) minItem() int {
+	return t.degree - 1
+}
+
+// Iterate iterates the tree
+func (t *btree) Iterate(iter iterator) {
+	t.root.iterate(iter)
 }
