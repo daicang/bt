@@ -7,8 +7,7 @@ import (
 	"time"
 )
 
-var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-var numberRunes = []rune("0123456789")
+var runes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
 func init() {
 	seed := time.Now().Unix()
@@ -20,7 +19,7 @@ func init() {
 func randString(length int) string {
 	b := make([]rune, length)
 	for i := range b {
-		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+		b[i] = runes[rand.Intn(len(runes))]
 	}
 	return string(b)
 }

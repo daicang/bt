@@ -58,17 +58,6 @@ func (in inode) search(key KeyType) (bool, int) {
 	return false, i
 }
 
-// set inserts or replaces item into inode
-func (in *inode) set(p pair) {
-	found, i := in.search(p.key)
-	if found {
-		(*in)[i] = p
-	} else {
-		in.insertAt(i, p)
-	}
-	// in.check()
-}
-
 // insert inserts it at given position, pushing subsequent values
 func (in *inode) insertAt(i int, p pair) {
 	*in = append((*in), pair{})

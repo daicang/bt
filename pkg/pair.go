@@ -22,11 +22,7 @@ func (key KeyType) lessThan(other KeyType) bool {
 }
 
 func (key KeyType) equalTo(other KeyType) bool {
-	return bytes.Compare(key, other) == 0
-}
-
-func (key KeyType) greaterThan(other KeyType) bool {
-	return bytes.Compare(key, other) == 1
+	return bytes.Equal(key, other)
 }
 
 // newPair creates a new pair
