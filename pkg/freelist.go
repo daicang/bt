@@ -1,10 +1,6 @@
-package btree
+package bt
 
 import "sync"
-
-const (
-	defaultFreeListSize = 32
-)
 
 type freeList struct {
 	mu   *sync.Mutex
