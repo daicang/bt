@@ -295,8 +295,8 @@ func (n *node) mergeChildWithRightSibling(i int) {
 	rightSibling.free()
 }
 
-// Print prints the node
-func (n *node) Print(w io.Writer, level int) {
+// print prints the node
+func (n *node) print(w io.Writer, level int) {
 	fmt.Fprintf(w, "%sNODE:%v\n", strings.Repeat("  ", level), n.inodes)
 	for _, c := range n.children {
 		c.print(w, level+1)
