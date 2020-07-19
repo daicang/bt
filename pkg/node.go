@@ -213,16 +213,6 @@ func (n *node) iterate(iter iterator) {
 	}
 }
 
-func (n *node) removeMin(minItem int) pair {
-	if len(n.children) == 0 {
-		return n.inodes.removeAt(0)
-	}
-	if len(n.children[0].inodes) <= minItem {
-		n.extendChild(0, minItem)
-	}
-	return n.children[0].removeMin(minItem)
-}
-
 func (n *node) removeMax(minItem int) pair {
 	if len(n.children) == 0 {
 		return n.inodes.pop()
@@ -305,7 +295,8 @@ func (n *node) mergeChildWithRightSibling(i int) {
 	rightSibling.free()
 }
 
-func (n *node) print(w io.Writer, level int) {
+// Print prints the node
+func (n *node) Print(w io.Writer, level int) {
 	fmt.Fprintf(w, "%sNODE:%v\n", strings.Repeat("  ", level), n.inodes)
 	for _, c := range n.children {
 		c.print(w, level+1)
